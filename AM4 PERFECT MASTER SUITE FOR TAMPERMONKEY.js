@@ -6,6 +6,7 @@
 // @author       HOSS
 // @match        *://*://*
 // @match        *://airlinemanager.com/*
+// @run-at       document-idle
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=airlinemanager.com
 // @grant        none
 // ==/UserScript==
