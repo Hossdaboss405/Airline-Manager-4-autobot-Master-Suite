@@ -19,7 +19,8 @@
 ive had it running for months with no bans or anything..
 ive been working on it for weeks and finally got it perfect.
 
-##Disclaimer
-Please note that this bot is against the Terms of Service of the game and its use may result in your account being banned. Use at your own risk
-The use of this bot is against the Terms of Service of Airline Manager 4. While efforts have been made to ensure the safety and reliability of this bot, the creator of this bot cannot be held responsible for any damages or consequences that may arise from its use.
+## Disclaimer
+The use of this bot is against the Terms of Service of Airline Manager 4. 
+While efforts have been made to ensure the safety and reliability of this bot, the creator of this bot cannot be held responsible for any damages or [consequences] that may arise from its use.
+
 Use this bot at your own risk and for educational purposes.
