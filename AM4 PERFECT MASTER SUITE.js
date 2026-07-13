@@ -316,9 +316,10 @@ function run24hMarketingRoutine() {
     var x = new XMLHttpRequest();
     x.onreadystatechange = function () {
         if (x.readyState === 4 && x.status === 200 && (x.responseText.includes('marketing_new.php') || x.responseText.includes('Campaign'))) {
-            call('marketing_new.php?type=1&mode=do&c=3');
-            call('marketing_new.php?type=2&mode=do&c=3');
-            call('marketing_new.php?type=3&mode=do&c=3');
+            call('marketing_new.php?type=1&mode=do&c=3'); //Eco Campaign
+            call('marketing_new.php?type=2&mode=do&c=3'); //Pax Campaign
+            call('marketing_new.php?type=3&mode=do&c=3'); //Cargo Campaign
+            call('marketing_new.php?type=10&mode=do&c=3'); //Charter Campaign
         }
     };
     x.open("GET", "marketing.php", true);
