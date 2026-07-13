@@ -8,7 +8,8 @@
 	[x] financial metrics overlay that shows net flow/min  average fuel/co2 spending (activates when script starts and updates every 10 minutes)
 	[x] console log of all actions performed so you can see what its doing..
 
-
+## Installation
+1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser extension on your preferred browser.
 	How to Install the Script- You can manually install the code in one of two ways
 	Option 1: Copy and Paste (Easiest)Click the Raw button in the GitHub repository.Press Ctrl + A to select all the text, then Ctrl + C to copy it. Click the Tampermonkey icon in your browser extension bar. Select Create a new script....Delete the default template, paste your copied script, and click File > Save.
 	Option 2: Import from URLCopy the full web URL of the Raw script page (e.g., https://raw.githubusercontent.com/...).Click the Tampermonkey icon and select Dashboard.Go to the Utilities tab at the top right.Scroll down to the Import from URL section, paste the URL, and click Install
