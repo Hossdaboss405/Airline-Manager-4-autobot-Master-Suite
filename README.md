@@ -4,7 +4,7 @@
 	[x] auto buy marketing (every 8 hours)
 	[x] auto repair worn aircraft below 20% (every 8 hours)
 	[x] auto A-check for any planes below 250 hours (every 8 hours)
-	[x] also has better autoprice to auto calculate for the 1.1, 1.08, and 1.06 (activates as soon as you click autoprice and changes pricing for you without having to go to calculator and do it yourself)
+	[x] better autoprice to auto calculate for the 1.1, 1.08, and 1.06 (activates as soon as you click autoprice and changes pricing for you without having to go to calculator and do it yourself)
 	[x] financial metrics overlay that shows net flow/min  average fuel/co2 spending (activates when script starts and updates every 10 minutes)
 	[x] console log of all actions performed so you can see what its doing..
 
