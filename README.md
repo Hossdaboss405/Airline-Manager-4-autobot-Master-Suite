@@ -4,15 +4,20 @@ It is intended to automate certain tasks in the game and make gameplay easier an
 
 Please note that this bot is against the Terms of Service of the game and its use may result in your account being banned. Use at your own risk.
 
-# AM4-Master-Suite-auto-bot
-	[x] auto depart (every 15 minutes)
-	[x] autobuy fuel/CO2 (every 15 minutes)
-	[x] auto buy marketing (every 8 hours)
-	[x] auto repair worn aircraft below 20% (every 8 hours)
-	[x] auto A-check for any planes below 250 hours (every 8 hours)
-	[x] better autoprice to auto calculate for the 1.1, 1.08, and 1.06 (activates as soon as you click autoprice and changes pricing for you without having to go to calculator and do it yourself)
-	[x] financial metrics overlay that shows net flow/min  average fuel/co2 spending (activates when script starts and updates every 10 minutes)
-	[x] console log of all actions performed so you can see what its doing..
+## Usage
+This bot is currently DONE with development and its functionality is PERFECT. It can currently automate the following tasks:
+- [x] Toggles for all auto functions
+- [x] Departing all planes
+- [x] Better autoprice when setting up new routes works for cargo and pax
+- [x] Auto-start Marketing campaign
+- [x] Buy fuel at low price
+- [x] Buy CO2 quotas at low price
+- [x] Launch A-checks for all planes below 250 hours
+- [x] Auto Repair all planes lower than 20%
+- [x] Buying new planes and setting up new routes (when you click on the route it will show long haul short haul or better options
+- [x] better hub suggestions (console log)
+- [x] financial metrics overlay that shows net income/minute avg fuel/co2 spending (activates as soon as script starts and updates every 10 minutes)
+
 
 ## Installation
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser extension on your preferred browser.
