@@ -316,9 +316,9 @@ function run24hMarketingRoutine() {
     var x = new XMLHttpRequest();
     x.onreadystatechange = function () {
         if (x.readyState === 4 && x.status === 200 && (x.responseText.includes('marketing_new.php') || x.responseText.includes('Campaign'))) {
-            call('marketing_new.php?type=1&mode=do&c=3'); //Eco Campaign
-            call('marketing_new.php?type=2&mode=do&c=3'); //Pax Campaign
-            call('marketing_new.php?type=3&mode=do&c=3'); //Cargo Campaign
+            call('marketing_new.php?type=5&mode=do&c=3'); //Eco Campaign
+            call('marketing_new.php?type=1&mode=do&c=3'); //Pax Campaign
+            call('marketing_new.php?type=2&mode=do&c=3'); //Cargo Campaign
             call('marketing_new.php?type=10&mode=do&c=3'); //Charter Campaign
         }
     };
@@ -804,18 +804,119 @@ function paxDemandWatcher() {
 }
 
 function scanMarketplaceForBestHubs() {
-    var bodyText = document.body.innerText;
-    if (!bodyText.includes('Buy hub') && !bodyText.includes('Purchase') && !bodyText.includes('Select country')) {
+    var popupBox = document.getElementById('popup');
+    var popupHTML = popupBox ? popupBox.innerHTML : "";
+    if (!popupHTML.includes('hubs_new.php') && !popupHTML.includes('select')) {
+        document.body.classList.remove('market-shortlist-logged');
         setTimeout(scanMarketplaceForBestHubs, 2500);
         return;
     }
     if (document.body.classList.contains('market-shortlist-logged')) {
+        runVisualHubHighlighter();
         setTimeout(scanMarketplaceForBestHubs, 2500);
         return;
     }
     document.body.classList.add('market-shortlist-logged');
+    console.log("[AM4 Bot Log] Hub Marketplace active. Initializing dynamic dropdown tracking modules...");
+    var countrySelect = document.querySelector("#popup select");
+    if (countrySelect && !countrySelect.classList.contains("bot-listener-bound")) {
+        countrySelect.classList.add("bot-listener-bound");
+        countrySelect.addEventListener("change", function() {
+            setTimeout(runVisualHubHighlighter, 400);
+        });
+    }
+    runVisualHubHighlighter();
     setTimeout(scanMarketplaceForBestHubs, 2500);
 }
+
+function runVisualHubHighlighter() {
+    // 1. ELITE COUNTRIES: Used ONLY to highlight the first country dropdown menu safely
+    var eliteCountries = [
+        "South Korea", "Singapore", "Hong Kong", "India", "UAE", "Bahrain",
+        "Australia", "Fiji",
+        "United Kingdom", "United Kingdom (Heathrow)", "Netherlands", "Germany", "France",
+        "United States", "Brazil", "Chile", "Venezuela", "Argentina",
+        "Tunisia", "Angola", "Senegal"
+    ];
+
+    // 2. ELITE AIRPORTS: Extracted exactly from the ultimate continental guide list
+    var highYieldAirports = [
+        // Asia
+        "Seoul Incheon", 
+        "Singapore Changi", 
+        "Hong Kong", 
+        "New Delhi", 
+        "Dubai International", 
+        "Manama",
+        
+        // Australia & Oceania
+        "Sydney intl", 
+        "Canberra", 
+        "Nadi",
+        
+        // Europe
+        "London Heathrow", 
+        "Amsterdam", 
+        "Frankfurt intl", 
+        "Paris Charles de Gaulle",
+        
+        // North America
+       "New York John F. Kennedy", 
+        "Dallas Fort-Worth", 
+        "Chicago O'Hare", 
+        "Los Angeles",
+        
+        // South America
+        "Sao Paolo Guarulhos", 
+        "Santiago de Chile", 
+        "Caracas", 
+        "Buenos Aires int",
+        
+        // Africa
+        "Tunis", 
+        "Luanda", 
+        "Dakar L.S. Senghor"
+    ];
+    
+    var generalElements = document.querySelectorAll("#popup option, #popup tr, .modal-body td");
+    generalElements.forEach(function(el) {
+        var text = (el.innerText || el.textContent || "").trim();
+        var shouldPaint = eliteCountries.includes(text) || highYieldAirports.includes(text);
+        
+        if (el.tagName.toLowerCase() === 'td' || el.tagName.toLowerCase() === 'tr') {
+            if (eliteCountries.includes(text) && !highYieldAirports.includes(text)) {
+                shouldPaint = false; 
+            }
+        }
+
+        if (shouldPaint && !el.classList.contains("bot-premium-hub-painted")) {
+            el.classList.add("bot-premium-hub-painted");
+            el.style.backgroundColor = "rgba(92, 184, 92, 0.35)";
+            el.style.border = "2px solid #5cb85c";
+            el.style.color = "#1b5e20";
+            el.style.fontWeight = "bold";
+        }
+    });
+    
+    var airportSelector = document.getElementById("hubAirportSelector") || document.querySelector("#hubCityContainer select");
+    if (airportSelector) {
+        var options = airportSelector.querySelectorAll("option");
+        options.forEach(function(opt) {
+            var optText = opt.innerText || opt.textContent || "";
+            highYieldAirports.forEach(function(target) {
+                if (optText.includes(target) && !opt.classList.contains("bot-premium-airport-tagged")) {
+                    opt.classList.add("bot-premium-airport-tagged");
+                    opt.innerText = "⭐ [BEST HUB] " + optText.toUpperCase();
+                    opt.style.backgroundColor = "#5cb85c";
+                    opt.style.color = "#ffffff";
+                    opt.style.fontWeight = "bold";
+                    console.log("[AM4 Bot Log] Successfully tagged premium airport option inside dropdown: " + target);
+                }
+            });
+        });
+    }
+}
+
 // PART 12 OF 13: LIVE FINANCIAL OVERLAY INTERFACE CARRIER
 function buildFinancialOverlay() {
     if (document.getElementById('am4FinancialMetricsDashboard')) return;
@@ -926,6 +1027,7 @@ setInterval(function() {
     setTimeout(autoCheckCheckLoop, 5500);
     setTimeout(setupClosePopProtection, 5800);
     setTimeout(buildFinancialOverlay, 6200);
+    
     creationPricingObserver.observe(document.body, { childList: true, subtree: true });
     console.log("[AM4 Bot Log] Master layout lifecycle extension successfully initialized.");
 })();
