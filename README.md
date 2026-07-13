@@ -17,6 +17,7 @@ This bot is currently DONE with development and its functionality is PERFECT. It
 - [x] Buying new planes and setting up new routes (when you click on the route it will show long haul short haul or better options
 - [x] better hub suggestions (console log)
 - [x] financial metrics overlay that shows net income/minute avg fuel/co2 spending (activates as soon as script starts and updates every 10 minutes)
+- [x] best hub purchase suggestions (highlighted for both country and airport)
 
 
 ## Installation
