@@ -1,3 +1,9 @@
+# Airline Manager 4 Bot
+This bot is designed for the airline management simulation game, Airline Manager 4. 
+It is intended to automate certain tasks in the game and make gameplay easier and more enjoyable.
+
+Please note that this bot is against the Terms of Service of the game and its use may result in your account being banned. Use at your own risk.
+
 # AM4-Master-Suite-auto-bot
 	[x] auto depart (every 15 minutes)
 	[x] autobuy fuel/CO2 (every 15 minutes)
