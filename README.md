@@ -15,9 +15,11 @@
 	Option 2: Import from URLCopy the full web URL of the Raw script page (e.g., https://raw.githubusercontent.com/...).Click the Tampermonkey icon and select Dashboard.Go to the Utilities tab at the top right.Scroll down to the Import from URL section, paste the URL, and click Install
 	Option 3 it can also run on google chrome dev console. you will need to go on your phone turn on airplane mode launch your airline manager 4 app and when it gives you the network error with your link post that in your desktop chrome browser open dev console(F12) create a new snippit, and copy and paste the script provided, then click CTRL + S to save the script and then right click on the script and press run.. then it will run exactly as needed and you can activate whatever toggles you please, if you want to see the logs of what its doing simple click console and it will show you the log of all actions performed
 
+##Notes
 ive had it running for months with no bans or anything..
 ive been working on it for weeks and finally got it perfect.
 
+##Disclaimer
 Please note that this bot is against the Terms of Service of the game and its use may result in your account being banned. Use at your own risk
 The use of this bot is against the Terms of Service of Airline Manager 4. While efforts have been made to ensure the safety and reliability of this bot, the creator of this bot cannot be held responsible for any damages or consequences that may arise from its use.
 Use this bot at your own risk and for educational purposes.
