@@ -14,11 +14,8 @@ This bot is currently DONE with development and its functionality is PERFECT. It
 - [x] Buy CO2 quotas at low price
 - [x] Launch A-checks for all planes below 250 hours
 - [x] Auto Repair all planes lower than 20%
-- [x] Buying new planes and setting up new routes (when you click on the route it will show long haul short haul or better options
-- [x] better hub suggestions (console log)
-- [x] financial metrics overlay that shows net income/minute avg fuel/co2 spending (activates as soon as script starts and updates every 10 minutes)
 - [x] best hub purchase suggestions (highlighted for both country and airport)
-
+- [x] financial metrics overlay that shows net income/minute avg fuel/co2 spending (activates as soon as script starts and updates every 10 minutes)
 
 ## Installation
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser extension on your preferred browser.
@@ -27,7 +24,7 @@ This bot is currently DONE with development and its functionality is PERFECT. It
 	Option 2: Import from URLCopy the full web URL of the Raw script page (https://raw.githubusercontent.com/Hossdaboss405/Airline-Manager-4-autobot-Master-Suite/refs/heads/main/AM4%20PERFECT%20MASTER%20SUITE%20FOR%20TAMPERMONKEY.js). Click the Tampermonkey icon and select Dashboard.Go to the Utilities tab at the top right.Scroll down to the Import from URL section, paste the URL, and click Install
 	Option 3 it can also run on google chrome dev console. you will need to go on your phone turn on airplane mode launch your airline manager 4 app and when it gives you the network error with your link post that in your desktop chrome browser open dev console(F12) create a new snippit, and copy and paste the script provided, then click CTRL + S to save the script and then right click on the script and press run.. then it will run exactly as needed and you can activate whatever toggles you please, if you want to see the logs of what its doing simple click console and it will show you the log of all actions performed
 
-##Notes
+## Notes
 ive had it running for months with no bans or anything..
 ive been working on it for weeks and finally got it perfect.
 
