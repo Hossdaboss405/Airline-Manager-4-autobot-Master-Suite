@@ -556,87 +556,126 @@ function finishVisualCloseAction(isRepairModule) {
 
 //Part 9 of 13: Custom Multiplier Pricing Interceptor
 document.addEventListener('click', function (e) {
-    var btn = e.target.closest('#introAuto') || e.target.closest('[onclick*="autoPrice"]') || (e.target.tagName === 'BUTTON' && e.target.innerText.toLowerCase().includes('autoprice'));
-    if (!btn) return;
-    var originalOnclick = btn.getAttribute('onclick');
-    if (!originalOnclick || !originalOnclick.includes('autoPrice')) return;
-    var matchPatterns = originalOnclick.match(/autoPrice\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)/) || originalOnclick.match(/autoPrice\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)/);
+    var btn = e.target.closest('#introAuto') || 
+              e.target.closest('[onclick*="ticketPriceSuggest"]') || 
+              (e.target.tagName === 'BUTTON' && e.target.innerText.toLowerCase().includes('auto'));
+    if (!btn) return; 
+
+    var originalOnclick = btn.getAttribute('onclick') || "";
+    if (!originalOnclick.includes('ticketPriceSuggest')) return;
+
+    var matchPatterns = originalOnclick.match(/ticketPriceSuggest\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)/);
+    
     var explicitBaseY = matchPatterns ? parseFloat(matchPatterns[1]) : 0;
     var explicitBaseJ = matchPatterns ? parseFloat(matchPatterns[2]) : 0;
-    var explicitBaseF = (matchPatterns && matchPatterns[3]) ? parseFloat(matchPatterns[3]) : 0;
+    var explicitBaseF = matchPatterns ? parseFloat(matchPatterns[3]) : 0;
+
     setTimeout(function() {
-        var isCargoRoute = document.getElementById('price_l') || document.getElementById('price_h');
+        var targetY = document.getElementById('eTicket') || document.getElementById('eSeat') || document.getElementById('price_y');
+        var targetJ = document.getElementById('bTicket') || document.getElementById('bSeat') || document.getElementById('price_j');
+        var targetF = document.getElementById('fTicket') || document.getElementById('fSeat') || document.getElementById('price_f');
+        
+        var targetL = document.getElementById('price_l');
+        var targetH = document.getElementById('price_h');
+        
+        // A route is ONLY treated as Cargo if the First Class element (#fTicket) is missing from the display tree entirely
+        var isCargoRoute = !targetF;
         var truncateToTwoDecimals = function(num) { return Math.floor(num * 100) / 100; };
+
         if (isCargoRoute) {
-            var targetL = document.getElementById('price_l');
-            var targetH = document.getElementById('price_h');
-            var baseLarge = explicitBaseY || parseFloat(targetL ? targetL.value : 0) || 0;
-            var baseHeavy = explicitBaseJ || parseFloat(targetH ? targetH.value : 0) || 0;
+            // CARGO PATHWAY
+            var baseLarge = explicitBaseY || parseFloat(targetL ? targetL.value : (targetY ? targetY.value : 0)) || 0;
+            var baseHeavy = explicitBaseJ || parseFloat(targetH ? targetH.value : (targetJ ? targetJ.value : 0)) || 0;
+
             if (baseLarge > 0 && baseHeavy > 0) {
                 var calcLarge = truncateToTwoDecimals(baseLarge * 1.10);
                 var calcHeavy = truncateToTwoDecimals(baseHeavy * 1.08);
-                if (targetL) { targetL.value = calcLarge.toFixed(2); targetL.dispatchEvent(new Event('input', { bubbles: true })); }
-                if (targetH) { targetH.value = calcHeavy.toFixed(2); targetH.dispatchEvent(new Event('input', { bubbles: true })); }
-                if (typeof autoPrice === 'function') { autoPrice(calcLarge, calcHeavy, baseLarge, baseHeavy); }
+
+                var inputL = targetL || targetY;
+                var inputH = targetH || targetJ;
+
+                if (inputL) {
+                    inputL.value = calcLarge.toFixed(2);
+                    inputL.dispatchEvent(new Event('input', { bubbles: true }));
+                    inputL.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                if (inputH) {
+                    inputH.value = calcHeavy.toFixed(2);
+                    inputH.dispatchEvent(new Event('input', { bubbles: true }));
+                    inputH.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                if (typeof window.autoPrice === 'function') {
+                    window.autoPrice(calcLarge, calcHeavy, baseLarge, baseHeavy);
+                } else if (typeof autoPrice === 'function') {
+                    autoPrice(calcLarge, calcHeavy, baseLarge, baseHeavy);
+                }
+                console.log("[AM4 Bot Log] Cargo Pricing Modified ➔ Large: $" + calcLarge.toFixed(2) + " | Heavy: $" + calcHeavy.toFixed(2));
             }
         } else {
-            var targetY = document.getElementById('eSeat') || document.getElementById('price_y');
-            var targetJ = document.getElementById('bSeat') || document.getElementById('price_j');
-            var targetF = document.getElementById('fSeat') || document.getElementById('price_f');
+            // PASSENGER PATHWAY
             var baseY = explicitBaseY || parseFloat(targetY ? targetY.value : 0) || 0;
             var baseJ = explicitBaseJ || parseFloat(targetJ ? targetJ.value : 0) || 0;
             var baseF = explicitBaseF || parseFloat(targetF ? targetF.value : 0) || 0;
-            if (!explicitBaseY && baseY > 0) { baseY = baseY / 1.10; baseJ = baseJ / 1.08; baseF = baseF / 1.06; }
+
             if (baseY > 0 && baseJ > 0 && baseF > 0) {
                 var calcY = Math.floor(baseY * 1.10);
                 var calcJ = Math.floor(baseJ * 1.08);
                 var calcF = Math.floor(baseF * 1.06);
-                if (targetY) { targetY.value = calcY.toString(); targetY.dispatchEvent(new Event('input', { bubbles: true })); }
-                if (targetJ) { targetJ.value = calcJ.toString(); targetJ.dispatchEvent(new Event('input', { bubbles: true })); }
-                if (targetF) { targetF.value = calcF.toString(); targetF.dispatchEvent(new Event('input', { bubbles: true })); }
-                if (typeof autoPrice === 'function') { autoPrice(calcY, calcJ, calcF, Math.floor(baseY), 0); }
+
+                if (targetY) {
+                    targetY.value = calcY.toString();
+                    targetY.dispatchEvent(new Event('input', { bubbles: true }));
+                    targetY.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                if (targetJ) {
+                    targetJ.value = calcJ.toString();
+                    targetJ.dispatchEvent(new Event('input', { bubbles: true }));
+                    targetJ.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                if (targetF) {
+                    // CRUCIAL GLOBAL OVERRIDE FIX FOR FIRST CLASS:
+                    // The native game engine function `ticketPriceSuggest` gets called AFTER our event handler captures the click.
+                    // Because `ticketPriceSuggest` uses internal variable logic that populates First Class after Eco/Biz, it was 
+                    // overwriting our custom 1.06 calculation value back to the game's default value inside the #fTicket input node box.
+                    // This block targets the exact #fTicket input value variable, applies our custom value, and explicitly bypasses 
+                    // the game's underlying native price suggestion function by writing directly to both DOM states.
+                    targetF.value = calcF.toString();
+                    targetF.setAttribute('value', calcF.toString());
+                    
+                    if (typeof jQuery !== 'undefined') {
+                        jQuery(targetF).val(calcF).trigger('input').trigger('change');
+                    } else {
+                        targetF.dispatchEvent(new Event('input', { bubbles: true }));
+                        targetF.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
+
+                // Force synchronization back to the webpage's core engine calculations system
+                if (typeof window.autoPrice === 'function') {
+                    window.autoPrice(calcY, calcJ, calcF, Math.floor(baseY), 0);
+                } else if (typeof autoPrice === 'function') {
+                    autoPrice(calcY, calcJ, calcF, Math.floor(baseY), 0);
+                }
+                
+                // FIXED PARSING SAFETY LAYER: Double check text input assignment inside a secondary microsecond delay cushion
+                setTimeout(function() {
+                    var verifyF = document.getElementById('fTicket') || document.getElementById('fSeat') || document.getElementById('price_f');
+                    if (verifyF && verifyF.value !== calcF.toString()) {
+                        verifyF.value = calcF.toString();
+                        if (typeof jQuery !== 'undefined') {
+                            jQuery(verifyF).val(calcF).trigger('input').trigger('change');
+                        } else {
+                            verifyF.dispatchEvent(new Event('input', { bubbles: true }));
+                            verifyF.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    }
+                }, 50);
+                
+                console.log("[AM4 Bot Log] Passenger Pricing Modified ➔ Eco: $" + calcY + " | Biz: $" + calcJ + " | First: $" + calcF);
             }
         }
     }, 1000);
-}, false);
-
-document.addEventListener('click', function(e) {
-    var isConfigPage = document.getElementById('eSeat') || document.querySelector('.seatPricing');
-    if (!isConfigPage) return;
-
-    setTimeout(function() {
-        var demandY = 0, demandJ = 0, demandF = 0;
-        document.querySelectorAll('td, span, div.row').forEach(function(n) {
-            var txt = n.innerText || "";
-            if (txt.includes('Y class')) { demandY = parseInt(txt.replace(/[^0-9]/g, ''), 10) || 0; }
-            if (txt.includes('J class')) { demandJ = parseInt(txt.replace(/[^0-9]/g, ''), 10) || 0; }
-            if (txt.includes('F class')) { demandF = parseInt(txt.replace(/[^0-9]/g, ''), 10) || 0; }
-        });
-
-        var totalDemand = demandY + demandJ + demandF;
-        if (totalDemand === 0) return;
-
-        var inputY = document.getElementById('eSeat');
-        var inputJ = document.getElementById('bSeat');
-        var inputF = document.getElementById('fSeat');
-        var maxSeatsVal = document.getElementById('totalSeatsVal');
-        var maxSeatsFallback = document.querySelector('.max-seats');
-
-        var rawSeatsText = "0";
-        if (maxSeatsVal) { rawSeatsText = maxSeatsVal.innerText; } else if (maxSeatsFallback) { rawSeatsText = maxSeatsFallback.innerText; }
-
-        var maxSeats = parseInt(rawSeatsText.replace(/[^0-9]/g, ''), 10) || 0;
-        if (!maxSeats || !inputY) return;
-
-        var assignY = Math.floor(maxSeats * (demandY / totalDemand));
-        var assignJ = Math.floor(maxSeats * (demandJ / totalDemand));
-        var assignF = maxSeats - (assignY + assignJ);
-
-        if (inputY) { inputY.value = assignY; inputY.dispatchEvent(new Event('input', { bubbles: true })); }
-        if (inputJ) { inputJ.value = assignJ; inputJ.dispatchEvent(new Event('input', { bubbles: true })); }
-        if (inputF) { inputF.value = assignF; inputF.dispatchEvent(new Event('input', { bubbles: true })); }
-        console.log("[AM4 Bot Log] Configuration Balanced -> Eco: " + assignY + " | Biz: " + assignJ + " | First: " + assignF);
-    }, 1200);
 }, false);
 // PART 10 OF 13: SANDBOXED DOM-TREE BACKGROUND BUYER (ZERO GRAPHICAL LOADING)
 function scanConsumable() {
