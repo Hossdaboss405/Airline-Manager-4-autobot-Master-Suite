@@ -444,14 +444,14 @@ function clickBulkCheck() {
     return btn ? humanClick(btn) : false;
 }
 
-function clickPlanesLowerThan250Hours() {
+function clickPlanesLowerThan275Hours() {
     var wrapper = document.getElementById("maintPlanAction");
     if (!wrapper) return 0;
     var hoursElements = wrapper.querySelectorAll("div.col-sm-6 b.text-success, div[data-id] b.text-success");
     var totalSelected = 0;
     hoursElements.forEach(function(el) {
         var hoursValue = parseInt(el.innerText.replace(/[^0-9]/g, ""), 10) || 999;
-        if (hoursValue < 250) {
+        if (hoursValue < 275) {
             var planeCard = el.closest(".col-sm-6") || el.closest("[data-id]");
             if (planeCard && !planeCard.classList.contains("selected")) {
                 humanClick(planeCard);
@@ -459,7 +459,7 @@ function clickPlanesLowerThan250Hours() {
             }
         }
     });
-    console.log("[AM4 Bot Log] Filter macro complete. Selected " + totalSelected + " aircraft variants with remaining hours under 250.");
+    console.log("[AM4 Bot Log] Filter macro complete. Selected " + totalSelected + " aircraft variants with remaining hours under 275.");
     return totalSelected;
 }
 
@@ -514,10 +514,10 @@ function runStandaloneCheckSequence() {
             if (!clickBulkCheck()) { finishVisualCloseAction(false); return; }
 
             setTimeout(function() {
-                var planesSelected = clickPlanesLowerThan250Hours();
+                var planesSelected = clickPlanesLowerThan275Hours();
 
                 if (planesSelected === 0) {
-                    console.log("[AM4 Bot Log] Check scan complete: 0 planes under 250 hours. Displaying visually for 3 seconds.");
+                    console.log("[AM4 Bot Log] Check scan complete: 0 planes under 275 hours. Displaying visually for 3 seconds.");
                     setTimeout(function() { finishVisualCloseAction(false); }, 3000);
                     return;
                 }
@@ -571,16 +571,16 @@ function finishVisualCloseAction(isRepairModule) {
 
 //Part 9 of 13: Custom Multiplier Pricing Interceptor
 document.addEventListener('click', function (e) {
-    var btn = e.target.closest('#introAuto') || 
-              e.target.closest('[onclick*="ticketPriceSuggest"]') || 
+    var btn = e.target.closest('#introAuto') ||
+              e.target.closest('[onclick*="ticketPriceSuggest"]') ||
               (e.target.tagName === 'BUTTON' && e.target.innerText.toLowerCase().includes('auto'));
-    if (!btn) return; 
+    if (!btn) return;
 
     var originalOnclick = btn.getAttribute('onclick') || "";
     if (!originalOnclick.includes('ticketPriceSuggest')) return;
 
     var matchPatterns = originalOnclick.match(/ticketPriceSuggest\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)/);
-    
+
     var explicitBaseY = matchPatterns ? parseFloat(matchPatterns[1]) : 0;
     var explicitBaseJ = matchPatterns ? parseFloat(matchPatterns[2]) : 0;
     var explicitBaseF = matchPatterns ? parseFloat(matchPatterns[3]) : 0;
@@ -589,10 +589,10 @@ document.addEventListener('click', function (e) {
         var targetY = document.getElementById('eTicket') || document.getElementById('eSeat') || document.getElementById('price_y');
         var targetJ = document.getElementById('bTicket') || document.getElementById('bSeat') || document.getElementById('price_j');
         var targetF = document.getElementById('fTicket') || document.getElementById('fSeat') || document.getElementById('price_f');
-        
+
         var targetL = document.getElementById('price_l');
         var targetH = document.getElementById('price_h');
-        
+
         // A route is ONLY treated as Cargo if the First Class element (#fTicket) is missing from the display tree entirely
         var isCargoRoute = !targetF;
         var truncateToTwoDecimals = function(num) { return Math.floor(num * 100) / 100; };
@@ -651,13 +651,13 @@ document.addEventListener('click', function (e) {
                 if (targetF) {
                     // CRUCIAL GLOBAL OVERRIDE FIX FOR FIRST CLASS:
                     // The native game engine function `ticketPriceSuggest` gets called AFTER our event handler captures the click.
-                    // Because `ticketPriceSuggest` uses internal variable logic that populates First Class after Eco/Biz, it was 
+                    // Because `ticketPriceSuggest` uses internal variable logic that populates First Class after Eco/Biz, it was
                     // overwriting our custom 1.06 calculation value back to the game's default value inside the #fTicket input node box.
-                    // This block targets the exact #fTicket input value variable, applies our custom value, and explicitly bypasses 
+                    // This block targets the exact #fTicket input value variable, applies our custom value, and explicitly bypasses
                     // the game's underlying native price suggestion function by writing directly to both DOM states.
                     targetF.value = calcF.toString();
                     targetF.setAttribute('value', calcF.toString());
-                    
+
                     if (typeof jQuery !== 'undefined') {
                         jQuery(targetF).val(calcF).trigger('input').trigger('change');
                     } else {
@@ -672,7 +672,7 @@ document.addEventListener('click', function (e) {
                 } else if (typeof autoPrice === 'function') {
                     autoPrice(calcY, calcJ, calcF, Math.floor(baseY), 0);
                 }
-                
+
                 // FIXED PARSING SAFETY LAYER: Double check text input assignment inside a secondary microsecond delay cushion
                 setTimeout(function() {
                     var verifyF = document.getElementById('fTicket') || document.getElementById('fSeat') || document.getElementById('price_f');
@@ -686,7 +686,7 @@ document.addEventListener('click', function (e) {
                         }
                     }
                 }, 50);
-                
+
                 console.log("[AM4 Bot Log] Passenger Pricing Modified ➔ Eco: $" + calcY + " | Biz: $" + calcJ + " | First: $" + calcF);
             }
         }
@@ -971,7 +971,9 @@ function runVisualHubHighlighter() {
     }
 }
 
-// PART 12 OF 13: LIVE FINANCIAL OVERLAY INTERFACE CARRIER
+//================================================================================
+// PART 12 OF 13: LIVE FINANCIAL OVERLAY INTERFACE CARRIER (ALLIANCE UPDATE)
+//================================================================================
 function buildFinancialOverlay() {
     if (document.getElementById('am4FinancialMetricsDashboard')) return;
     var container = document.createElement('div');
@@ -997,9 +999,11 @@ function buildFinancialOverlay() {
         '</div>',
         '<table style="width:100%; border-collapse:collapse;">',
         '<tr><td style="color:#aaa; padding:2px 0;">Est. Fleet ROI:</td><td id="metricOverlayROI" style="text-align:right; font-weight:bold; color:#10b981;">---</td></tr>',
-        '<tr><td style="color:#aaa; padding:2px 0;">Net Flow/Min:</td><td id="metricOverlayFlow" style="text-align:right; font-weight:bold; color:#38bdf8;">---</td></tr>',
+        '<tr><td style="color:#aaa; padding:2px 0;">Net Flow/Day:</td><td id="metricOverlayFlow" style="text-align:right; font-weight:bold; color:#38bdf8;">---</td></tr>',
         '<tr><td style="color:#aaa; padding:2px 0;">Avg Fuel Spend:</td><td id="metricOverlayFuelSpend" style="text-align:right; color:#f59e0b;">---</td></tr>',
         '<tr><td style="color:#aaa; padding:2px 0;">Avg CO2 Spend:</td><td id="metricOverlayCo2Spend" style="text-align:right; color:#f59e0b;">---</td></tr>',
+        '<tr><td style="color:#aaa; padding:2px 0; border-top:1px dashed #334155;">Alliance Cont/Flt:</td><td id="metricOverlayAllianceFlight" style="text-align:right; color:#c084fc; font-weight:bold;">---</td></tr>',
+        '<tr><td style="color:#aaa; padding:2px 0;">Alliance Cont/Day:</td><td id="metricOverlayAllianceDay" style="text-align:right; color:#c084fc; font-weight:bold;">---</td></tr>',
         '</table>',
         '<div style="font-size:9px; color:#64748b; margin-top:6px; border-top:1px dashed #334155; padding-top:4px; text-align:center;">Tracking network metrics real-time...</div>'
     ].join('');
@@ -1011,7 +1015,13 @@ function buildFinancialOverlay() {
         });
     }
 }
-// PART 13 OF 13: FINANCIAL ROLLING SCRAPER MASTER CALCULATIONS
+
+//================================================================================
+// PART 13 OF 13: FINANCIAL ROLLING SCRAPER MASTER CALCULATIONS (DYNAMIC BANK VALUE ROI)
+//================================================================================
+var cachedAllianceContDay = 0;
+var cachedAllianceContFlight = 0;
+
 setInterval(function() {
     var overlayBox = document.getElementById('am4FinancialMetricsDashboard');
     if (!overlayBox || overlayBox.style.display === 'none') return;
@@ -1035,34 +1045,70 @@ setInterval(function() {
         combinedSum += val;
     });
     var flowPerMin = netRevenueIntervalTicks.length > 0 ? Math.floor((combinedSum / netRevenueIntervalTicks.length) * 6) : 0;
+    var flowPerDay = flowPerMin * 60 * 24;
+
+    // RESTORED FLEET ROI FIX: Automatically calculates how long it takes your fleet to duplicate your exact bank roll
     var displayRoi = "Infinite";
-    if (flowPerMin > 0) {
-        var approxCost = 45000000;
-        var daysToPayback = ((approxCost / flowPerMin) / 60 / 24);
+    if (flowPerDay > 0 && currentCash > 0) {
+        var daysToPayback = currentCash / flowPerDay;
         displayRoi = daysToPayback.toFixed(1) + " Days";
     }
     var fField = document.getElementById('metricOverlayFlow');
     var rField = document.getElementById('metricOverlayROI');
     var fuelField = document.getElementById('metricOverlayFuelSpend');
     var co2Field = document.getElementById('metricOverlayCo2Spend');
+    var allianceFlightField = document.getElementById('metricOverlayAllianceFlight');
+    var allianceDayField = document.getElementById('metricOverlayAllianceDay');
     if (fField) {
-        fField.innerText = (flowPerMin >= 0 ? "+" : "") + flowPerMin.toLocaleString() + " /m";
-        fField.style.color = flowPerMin >= 0 ? '#10b981' : '#ef4444';
+        fField.innerText = (flowPerDay >= 0 ? "+" : "") + flowPerDay.toLocaleString() + " /d";
+        fField.style.color = flowPerDay >= 0 ? '#10b981' : '#ef4444';
     }
     if (rField) {
         rField.innerText = displayRoi;
     }
     if (fuelField) {
         var baseFuel = typeof fuelPriceThreshold !== 'undefined' ? fuelPriceThreshold : 1000;
-        fuelField.innerText = "$" + Math.floor(baseFuel * 0.12).toLocaleString();
+        fuelField.innerText = "$" + Math.floor(baseFuel * 0.12 * 60 * 24).toLocaleString() + " /d";
     }
     if (co2Field) {
         var baseCo2 = typeof co2PriceThreshold !== 'undefined' ? co2PriceThreshold : 200;
-        co2Field.innerText = "$" + Math.floor(baseCo2 * 0.18).toLocaleString();
+        co2Field.innerText = "$" + Math.floor(baseCo2 * 0.18 * 60 * 24).toLocaleString() + " /d";
+    }
+
+    // DIRECT ALLIANCE SCRAPER OVERRIDE MAPPING
+    var liveAllianceCell = document.querySelector("#al-list-8409987 > td:nth-child(4)");
+    if (liveAllianceCell) {
+        var rawText = (liveAllianceCell.innerText || "").replace(/[^0-9]/g, '').trim();
+        var rawParsedInt = parseInt(rawText, 10) || 0;
+        if (rawParsedInt > 0) {
+            cachedAllianceContDay = rawParsedInt;
+            localStorage.setItem('am4_cached_alliance_day_v4', cachedAllianceContDay);
+
+            var flightVolumeCell = document.querySelector("#al-list-8409987 > td:nth-child(5)");
+            if (flightVolumeCell) {
+                var cleanFlightsNum = parseInt(flightVolumeCell.innerText.replace(/[^0-9]/g, ''), 10) || 1;
+                if (cleanFlightsNum > 0) {
+                    cachedAllianceContFlight = Math.floor(cachedAllianceContDay / (cleanFlightsNum / 10));
+                    localStorage.setItem('am4_cached_alliance_flight_v4', cachedAllianceContFlight);
+                }
+            }
+        }
+    } else {
+        cachedAllianceContDay = parseInt(localStorage.getItem('am4_cached_alliance_day_v4'), 10) || 0;
+        cachedAllianceContFlight = parseInt(localStorage.getItem('am4_cached_alliance_flight_v4'), 10) || 0;
+    }
+
+    if (allianceFlightField) {
+        allianceFlightField.innerText = cachedAllianceContFlight > 0 ? "$" + cachedAllianceContFlight.toLocaleString() : "---";
+    }
+    if (allianceDayField) {
+        allianceDayField.innerText = cachedAllianceContDay > 0 ? "$" + cachedAllianceContDay.toLocaleString() + " /d" : "---";
     }
 }, 10000);
 
-// MASTER CORE LAUNCHPAD SEQUENCE
+//================================================================================
+// MASTER CORE LAUNCHPAD SEQUENCE (RESTORED TO MATCH 10-SECOND REFRESH OVERLAY)
+//================================================================================
 (function() {
     'use strict';
     if (!window.location.href.includes('airlinemanager.com')) return;
@@ -1072,6 +1118,7 @@ setInterval(function() {
             window.L.LayerGroup.prototype.removeLayer = function(l) { return l ? origRemove.call(this, l) : this; };
         }
     }
+
     setTimeout(injectToggleControls, 2000);
     setTimeout(routeDistanceWatcher, 4000);
     setTimeout(cargoDemandWatcher, 4500);
@@ -1079,8 +1126,12 @@ setInterval(function() {
     setTimeout(scanMarketplaceForBestHubs, 5000);
     setTimeout(autoRepairCheckLoop, 5200);
     setTimeout(autoCheckCheckLoop, 5500);
-    setTimeout(setupClosePopProtection, 5800);
+    setupClosePopProtection();
     setTimeout(buildFinancialOverlay, 6200);
+
+    // FIXED: Your new Part 13 handles its own continuous 10-second loop timing natively via setInterval.
+    // The 30-minute backup timers and duplicate executeFinancialOverlayCycle overrides have been completely removed.
+
     creationPricingObserver.observe(document.body, { childList: true, subtree: true });
     console.log("[AM4 Bot Log] Master layout lifecycle extension successfully initialized.");
 })();
