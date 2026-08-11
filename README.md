@@ -16,6 +16,7 @@ This bot is currently DONE with development and its functionality is PERFECT. It
 - [x] Auto Repair all planes lower than 20%
 - [x] best hub purchase suggestions (highlighted for both country and airport)
 - [x] financial metrics overlay that shows net income/minute avg fuel/co2 spending (activates as soon as script starts and updates every 10 minutes)
+- [x]financial metrics now also show the alliance contribution/day as well as integrated method to calculate the alliance contribution per flight "C/F" 
 
 ## Installation
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser extension on your preferred browser.
