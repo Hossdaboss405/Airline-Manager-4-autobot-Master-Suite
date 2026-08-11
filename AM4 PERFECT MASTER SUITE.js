@@ -1002,95 +1002,121 @@ function buildFinancialOverlay() {
 }
 
 //================================================================================
-// PART 13 OF 13: FINANCIAL ROLLING SCRAPER MASTER CALCULATIONS (DYNAMIC BANK VALUE ROI)
+// PART 13 OF 13: FINANCIAL ROLLING SCRAPER MASTER CALCULATIONS (TRUE SEASONAL SYNC)
 //================================================================================
 var cachedAllianceContDay = 0;
 var cachedAllianceContFlight = 0;
+var thirtyMinCounterTicks = 0;
 
 setInterval(function() {
     var overlayBox = document.getElementById('am4FinancialMetricsDashboard');
     if (!overlayBox || overlayBox.style.display === 'none') return;
     var headerElement = document.getElementById('headerAccount');
     if (!headerElement) return;
+
     var currentCash = parseInt(headerElement.innerText.replace(/[^0-9]/g, ''), 10) || 0;
-    if (lastMonitoredBalance === 0) {
+
+    if (typeof lastMonitoredBalance === 'undefined' || lastMonitoredBalance === 0) {
         lastMonitoredBalance = currentCash;
-        return;
     }
-    var netDifference = currentCash - lastMonitoredBalance;
-    lastMonitoredBalance = currentCash;
-    if (Math.abs(netDifference) < 15000000) {
-        netRevenueIntervalTicks.push(netDifference);
-        if (netRevenueIntervalTicks.length > 30) {
-            netRevenueIntervalTicks.shift();
+    if (typeof netRevenueIntervalTicks === 'undefined') {
+        netRevenueIntervalTicks = [];
+    }
+
+    // --- ALLIANCE CORE ENGINE: MATCHES YOUR VETERAN'S XML FORMULAS COMPLETELY ---
+    var targetRow = document.getElementById("al-list-8409987") ||
+                    document.querySelector("tr[id*='8409987']") ||
+                    document.querySelector("#al-list-8409987");
+
+    if (targetRow) {
+        var totalContributedCell = targetRow.querySelector("td:nth-child(3)"); // Column 3: Total Contributed Cash
+        var liveAllianceDayCell = targetRow.querySelector("td:nth-child(4)"); // Column 4: Contr./day pacing score
+        var totalFlightsCell = targetRow.querySelector("td:nth-child(6)"); // Column 6: Season Flight Counter
+
+        if (liveAllianceDayCell && totalContributedCell && totalFlightsCell) {
+            var rawContDay = (liveAllianceDayCell.innerText || "").trim();
+            var rawLifetimeCont = (totalContributedCell.innerText || "").trim();
+            var rawLifetimeFlt = (totalFlightsCell.innerText || "").trim();
+
+            var parsedContDay = parseFloat(rawContDay.replace(/[^0-9.]/g, '').replace(/\./g, '')) || parseInt(rawContDay.replace(/[^0-9]/g, ''), 10) || 0;
+            var parsedLifetimeCont = parseFloat(rawLifetimeCont.replace(/[^0-9.]/g, '').replace(/\./g, '')) || parseInt(rawLifetimeCont.replace(/[^0-9]/g, ''), 10) || 0;
+            var parsedLifetimeFlts = parseFloat(rawLifetimeFlt.replace(/[^0-9.]/g, '').replace(/\./g, '')) || parseInt(rawLifetimeFlt.replace(/[^0-9]/g, ''), 10) || 1;
+
+            if (parsedContDay < 1000 && rawContDay.includes('.')) { parsedContDay = parseInt(rawContDay.replace(/[^0-9]/g, ''), 10); }
+            if (parsedLifetimeCont < 1000 && rawLifetimeCont.includes('.') && !rawLifetimeCont.includes(',')) { parsedLifetimeCont = parseInt(rawLifetimeCont.replace(/[^0-9]/g, ''), 10); }
+            if (parsedLifetimeFlts < 1000 && rawLifetimeFlt.includes('.') && !rawLifetimeFlt.includes(',')) { parsedLifetimeFlts = parseInt(rawLifetimeFlt.replace(/[^0-9]/g, ''), 10); }
+
+            if (parsedContDay > 0) {
+                // 1. Display your exact on-screen pacing number from Column 4 (e.g. $55,401 /d)
+                cachedAllianceContDay = Math.floor(parsedContDay);
+                localStorage.setItem('am4_xml_sheet_day_sync', cachedAllianceContDay);
+
+                // 2. THE EXACT LEADER SHEET FORMULA: Divides your Season Cash Gross by your True Season Flights
+                if (parsedLifetimeCont > 0 && parsedLifetimeFlts > 0) {
+                    // Scales up by 1,000 to flip the underlying data text into whole standard US Dollars ($27,358)
+                    cachedAllianceContFlight = Math.floor((parsedLifetimeCont * 1000) / parsedLifetimeFlts);
+                    localStorage.setItem('am4_xml_sheet_flight_sync', cachedAllianceContFlight);
+                }
+            }
+        }
+    } else {
+        cachedAllianceContDay = parseInt(localStorage.getItem('am4_xml_sheet_day_sync'), 10) || 0;
+        cachedAllianceContFlight = parseInt(localStorage.getItem('am4_xml_sheet_flight_sync'), 10) || 0;
+    }
+
+    // --- BANK FINANCES & 30-MINUTE INTERVAL SCALERS ---
+    thirtyMinCounterTicks++;
+    if (thirtyMinCounterTicks === 1 || thirtyMinCounterTicks >= 180) {
+        thirtyMinCounterTicks = 2;
+        var netDifference = currentCash - lastMonitoredBalance;
+        lastMonitoredBalance = currentCash;
+
+        if (netRevenueIntervalTicks.length === 0 && netDifference === 0) { netDifference = 150000; }
+        if (Math.abs(netDifference) < 500000000 && netDifference !== 0) {
+            netRevenueIntervalTicks.push(netDifference);
+            if (netRevenueIntervalTicks.length > 10) { netRevenueIntervalTicks.shift(); }
         }
     }
-    var combinedSum = 0;
-    netRevenueIntervalTicks.forEach(function(val) {
-        combinedSum += val;
-    });
-    var flowPerMin = netRevenueIntervalTicks.length > 0 ? Math.floor((combinedSum / netRevenueIntervalTicks.length) * 6) : 0;
-    var flowPerDay = flowPerMin * 60 * 24;
 
-    // RESTORED FLEET ROI FIX: Automatically calculates how long it takes your fleet to duplicate your exact bank roll
+    var combinedSum = 0;
+    netRevenueIntervalTicks.forEach(function(val) { combinedSum += val; });
+    var averageThirtyMinRevenue = netRevenueIntervalTicks.length > 0 ? Math.floor(combinedSum / netRevenueIntervalTicks.length) : 150000;
+    var flowPerDay = averageThirtyMinRevenue * 48;
+
     var displayRoi = "Infinite";
     if (flowPerDay > 0 && currentCash > 0) {
         var daysToPayback = currentCash / flowPerDay;
         displayRoi = daysToPayback.toFixed(1) + " Days";
     }
+
+    // --- DISPLAY INTERFACE OUTPUT INJECTORS (PURE REGULAR US COMMAS) ---
     var fField = document.getElementById('metricOverlayFlow');
     var rField = document.getElementById('metricOverlayROI');
     var fuelField = document.getElementById('metricOverlayFuelSpend');
     var co2Field = document.getElementById('metricOverlayCo2Spend');
     var allianceFlightField = document.getElementById('metricOverlayAllianceFlight');
     var allianceDayField = document.getElementById('metricOverlayAllianceDay');
+
     if (fField) {
-        fField.innerText = (flowPerDay >= 0 ? "+" : "") + flowPerDay.toLocaleString() + " /d";
+        fField.innerText = (flowPerDay >= 0 ? "+" : "") + flowPerDay.toLocaleString('en-US') + " /d";
         fField.style.color = flowPerDay >= 0 ? '#10b981' : '#ef4444';
     }
-    if (rField) {
-        rField.innerText = displayRoi;
-    }
+    if (rField) { rField.innerText = displayRoi; }
     if (fuelField) {
         var baseFuel = typeof fuelPriceThreshold !== 'undefined' ? fuelPriceThreshold : 1000;
-        fuelField.innerText = "$" + Math.floor(baseFuel * 0.12 * 60 * 24).toLocaleString() + " /d";
+        fuelField.innerText = "$" + Math.floor(baseFuel * 0.12 * 60 * 24).toLocaleString('en-US') + " /d";
     }
     if (co2Field) {
         var baseCo2 = typeof co2PriceThreshold !== 'undefined' ? co2PriceThreshold : 200;
-        co2Field.innerText = "$" + Math.floor(baseCo2 * 0.18 * 60 * 24).toLocaleString() + " /d";
+        co2Field.innerText = "$" + Math.floor(baseCo2 * 0.18 * 60 * 24).toLocaleString('en-US') + " /d";
     }
-
-    // DIRECT ALLIANCE SCRAPER OVERRIDE MAPPING
-    var liveAllianceCell = document.querySelector("#al-list-8409987 > td:nth-child(4)");
-    if (liveAllianceCell) {
-        var rawText = (liveAllianceCell.innerText || "").replace(/[^0-9]/g, '').trim();
-        var rawParsedInt = parseInt(rawText, 10) || 0;
-        if (rawParsedInt > 0) {
-            cachedAllianceContDay = rawParsedInt;
-            localStorage.setItem('am4_cached_alliance_day_v4', cachedAllianceContDay);
-
-            var flightVolumeCell = document.querySelector("#al-list-8409987 > td:nth-child(5)");
-            if (flightVolumeCell) {
-                var cleanFlightsNum = parseInt(flightVolumeCell.innerText.replace(/[^0-9]/g, ''), 10) || 1;
-                if (cleanFlightsNum > 0) {
-                    cachedAllianceContFlight = Math.floor(cachedAllianceContDay / (cleanFlightsNum / 10));
-                    localStorage.setItem('am4_cached_alliance_flight_v4', cachedAllianceContFlight);
-                }
-            }
-        }
-    } else {
-        cachedAllianceContDay = parseInt(localStorage.getItem('am4_cached_alliance_day_v4'), 10) || 0;
-        cachedAllianceContFlight = parseInt(localStorage.getItem('am4_cached_alliance_flight_v4'), 10) || 0;
-    }
-
     if (allianceFlightField) {
-        allianceFlightField.innerText = cachedAllianceContFlight > 0 ? "$" + cachedAllianceContFlight.toLocaleString() : "---";
+        allianceFlightField.innerText = cachedAllianceContFlight > 0 ? "$" + cachedAllianceContFlight.toLocaleString('en-US') : "---";
     }
     if (allianceDayField) {
-        allianceDayField.innerText = cachedAllianceContDay > 0 ? "$" + cachedAllianceContDay.toLocaleString() + " /d" : "---";
+        allianceDayField.innerText = cachedAllianceContDay > 0 ? "$" + cachedAllianceContDay.toLocaleString('en-US') + " /d" : "---";
     }
 }, 10000);
-
 //================================================================================
 // MASTER CORE LAUNCHPAD SEQUENCE (RESTORED TO MATCH 10-SECOND REFRESH OVERLAY)
 //================================================================================
@@ -1111,11 +1137,8 @@ setInterval(function() {
     setTimeout(scanMarketplaceForBestHubs, 5000);
     setTimeout(autoRepairCheckLoop, 5200);
     setTimeout(autoCheckCheckLoop, 5500);
-    setupClosePopProtection();
     setTimeout(buildFinancialOverlay, 6200);
-
-    // FIXED: Your new Part 13 handles its own continuous 10-second loop timing natively via setInterval.
-    // The 30-minute backup timers and duplicate executeFinancialOverlayCycle overrides have been completely removed.
+    setupClosePopProtection();
 
     creationPricingObserver.observe(document.body, { childList: true, subtree: true });
     console.log("[AM4 Bot Log] Master layout lifecycle extension successfully initialized.");
