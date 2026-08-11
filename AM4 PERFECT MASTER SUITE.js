@@ -16,8 +16,8 @@ var marketingType = 1;
 var marketingDuration = 3;
 var isBotPausedDueToFunds = false;
 
-var fuelPriceThreshold = 1000; 
-var co2PriceThreshold = 200;   
+var fuelPriceThreshold = 1000;
+var co2PriceThreshold = 200;
 
 var lastMonitoredBalance = 0;
 var lastMonitoredFuel = 0;
@@ -150,7 +150,7 @@ function triggerRepairToggle() {
         var popupEl = document.getElementById('popup');
         // If a popup was just open or is currently fading out, add an 800ms delay to let the animations clear
         var delayTime = (popupEl && popupEl.style.display === 'block') ? 800 : 50;
-        
+
         setTimeout(function() {
             autoRepairCheckLoop();
         }, delayTime);
@@ -166,7 +166,7 @@ function triggerCheckToggle() {
         var popupEl = document.getElementById('popup');
         // If a popup was just open or is currently fading out, add an 800ms delay to let the animations clear
         var delayTime = (popupEl && popupEl.style.display === 'block') ? 800 : 50;
-        
+
         setTimeout(function() {
             autoCheckCheckLoop();
         }, delayTime);
@@ -205,7 +205,7 @@ function injectToggleControls() {
     liStatus.style.cssText = "display:inline-block; padding:0 10px; vertical-align:middle;";
     liStatus.innerHTML = "<span style='font-size:10px; color:#aaa;'>Fleet Status</span><br><span id='maintenanceStatusLabel' style='color:#5cb85c; font-weight:bold; font-size:11px;'>Fleet Healthy</span>";
     navbarTarget.appendChild(liStatus);
-    
+
     document.getElementById("autoDepartCheckbox").addEventListener("change", triggerDepartToggle);
     document.getElementById("autoBuyerCheckbox").addEventListener("change", triggerBuyerToggle);
     document.getElementById("autoMarketingCheckbox").addEventListener("change", triggerMarketingToggle);
@@ -260,15 +260,15 @@ function setupClosePopProtection() {
 function autoDepartRoutine() {
     // Clear any existing timers first to prevent multiple stacked threads
     clearTimeout(autoDepartTimeoutID);
-    
+
     var cb = document.getElementById("autoDepartCheckbox");
     if (cb && cb.checked) {
         console.log("[AM4 Bot Log] Initializing background departure sequence evaluation...");
         executeDepartAllAction();
     }
-    
+
     // Unconditionally reschedule the loop for 15 minutes, ensuring it repeats forever
-    autoDepartTimeoutID = setTimeout(autoDepartRoutine, 15 * 60 * 1000); 
+    autoDepartTimeoutID = setTimeout(autoDepartRoutine, 15 * 60 * 1000);
 }
 
 function executeDepartAllAction() {
@@ -277,32 +277,32 @@ function executeDepartAllAction() {
         console.log("[AM4 Bot Log] Departure scan bypass: #listDepartAmount node missing from dashboard.");
         return;
     }
-    
+
     var planesReady = parseInt(span.innerText.replace(/[^0-9]/g, ""), 10) || 0;
-    
+
     if (planesReady > 0) {
         console.log("[AM4 Bot Log] Dispatching flight paths for " + planesReady + " ready aircraft frames.");
-        
+
         // 1. Refresh marketing agreements silently via background channels
         var x = new XMLHttpRequest();
         x.open("GET", "marketing_new.php?type=" + marketingType + "&mode=do&c=" + marketingDuration, true);
         x.send();
-        
+
         // 2. Click the physical departure anchor element node after a layout settlement window
-        setTimeout(function () { 
+        setTimeout(function () {
             if (span.parentElement) {
                 // Release active focus layers right before dispatching the click event
                 if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-                
-                span.parentElement.click(); 
-                
+
+                span.parentElement.click();
+
                 // FIXED: Clear any lingering grey overlays or modals left behind by the native click trigger
                 setTimeout(function() {
                     if (typeof window.originalClosePop === 'function') window.originalClosePop();
                     if (typeof jQuery !== 'undefined') jQuery('.modal-backdrop').remove();
                     if (document.body && document.body.focus) document.body.focus();
                 }, 1000);
-            } 
+            }
         }, 1200);
     } else {
         console.log("[AM4 Bot Log] Departure scan complete: 0 aircraft frames at gates. Thread resting.");
@@ -312,35 +312,35 @@ function executeDepartAllAction() {
 function run24hMarketingRoutine() {
     var cb = document.getElementById("autoMarketingCheckbox");
     if (!cb || !cb.checked) return;
-    
+
     var x = new XMLHttpRequest();
     x.onreadystatechange = function () {
         if (x.readyState === 4 && x.status === 200 && (x.responseText.includes('marketing_new.php') || x.responseText.includes('Campaign'))) {
-            call('marketing_new.php?type=5&mode=do&c=3'); //Eco Campaign
-            call('marketing_new.php?type=1&mode=do&c=3'); //Pax Campaign
-            call('marketing_new.php?type=2&mode=do&c=3'); //Cargo Campaign
+            call('marketing_new.php?type=1&mode=do&c=3'); //Eco Campaign
+            call('marketing_new.php?type=2&mode=do&c=3'); //Pax Campaign
+            call('marketing_new.php?type=3&mode=do&c=3'); //Cargo Campaign
             call('marketing_new.php?type=10&mode=do&c=3'); //Charter Campaign
         }
     };
     x.open("GET", "marketing.php", true);
     x.send();
-    
+
     clearTimeout(autoMarketingTimeoutID);
-    autoMarketingTimeoutID = setTimeout(run24hMarketingRoutine, 12 * 60 * 60 * 1000); 
+    autoMarketingTimeoutID = setTimeout(run24hMarketingRoutine, 12 * 60 * 60 * 1000);
 }
 
 function autoRepairCheckLoop() {
     if (checkAccountBalanceToastSafety() || isBotPausedDueToFunds) return;
     var cb = document.getElementById("autoRepairCheckbox");
     if (!cb || !cb.checked) return;
-    
+
     var popupEl = document.getElementById('popup');
     if (isMaintenanceRunning || (popupEl && popupEl.style.display === 'block')) {
         clearTimeout(autoRepairTimeoutID);
         autoRepairTimeoutID = setTimeout(autoRepairCheckLoop, 5000);
         return;
     }
-    
+
     console.log("[AM4 Bot Log] Triggering visual Auto-Repair sequence evaluation...");
     isMaintenanceRunning = true;
     if (typeof runStandaloneRepairSequence === 'function') {
@@ -354,14 +354,14 @@ function autoCheckCheckLoop() {
     if (checkAccountBalanceToastSafety() || isBotPausedDueToFunds) return;
     var cb = document.getElementById("autoCheckCheckbox");
     if (!cb || !cb.checked) return;
-    
+
     var popupEl = document.getElementById('popup');
     if (isCheckMaintenanceRunning || (popupEl && popupEl.style.display === 'block')) {
         clearTimeout(autoCheckTimeoutID);
         autoCheckTimeoutID = setTimeout(autoCheckCheckLoop, 5000);
         return;
     }
-    
+
     console.log("[AM4 Bot Log] Triggering visual Auto-Check sequence evaluation...");
     isCheckMaintenanceRunning = true;
     if (typeof runStandaloneCheckSequence === 'function') {
@@ -374,85 +374,85 @@ function autoCheckCheckLoop() {
 //================================================================================
 // Part 7 of 13: Interaction Macro Click Solvers
 //================================================================================
-function humanClick(el) { 
-    if (!el) return false; 
-    ["mousedown", "mouseup", "click"].forEach(function (t) { 
-        el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); 
-    }); 
-    return true; 
-} 
+function humanClick(el) {
+    if (!el) return false;
+    ["mousedown", "mouseup", "click"].forEach(function (t) {
+        el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+    });
+    return true;
+}
 
-function openMaintenancePopup() { 
-    if (typeof jQuery !== 'undefined') { 
-        jQuery('.modal-backdrop').remove(); 
+function openMaintenancePopup() {
+    if (typeof jQuery !== 'undefined') {
+        jQuery('.modal-backdrop').remove();
     }
-    var btn = document.querySelector('[onclick*="maintenance.php"]') || document.querySelector('[onclick*="maintenance"]') || document.querySelector('.btn-maintenance'); 
-    return btn ? humanClick(btn) : false; 
-} 
+    var btn = document.querySelector('[onclick*="maintenance.php"]') || document.querySelector('[onclick*="maintenance"]') || document.querySelector('.btn-maintenance');
+    return btn ? humanClick(btn) : false;
+}
 
-function clickPlanTab() { 
-    var btn = document.getElementById("popBtn2") || document.querySelector('button[onclick*="maint_plan.php"]'); 
-    return btn ? humanClick(btn) : false; 
-} 
+function clickPlanTab() {
+    var btn = document.getElementById("popBtn2") || document.querySelector('button[onclick*="maint_plan.php"]');
+    return btn ? humanClick(btn) : false;
+}
 
-function clickBulkRepair() { 
-    var btn = document.querySelector('[onclick*="maint_plan_repair_bulk.php"]') || document.querySelector('[onclick*="maint_plan_repair_bulk"]'); 
-    return btn ? humanClick(btn) : false; 
-} 
+function clickBulkRepair() {
+    var btn = document.querySelector('[onclick*="maint_plan_repair_bulk.php"]') || document.querySelector('[onclick*="maint_plan_repair_bulk"]');
+    return btn ? humanClick(btn) : false;
+}
 
-function select20Percent() { 
-    var selects = document.querySelectorAll("select"); 
-    for (var i = 0; i < selects.length; i++) { 
-        var opts = selects[i].options; 
-        for (var j = 0; j < opts.length; j++) { 
-            if (opts[j].text.includes("20")) { 
-                selects[i].selectedIndex = j; 
-                selects[i].dispatchEvent(new Event("change", { bubbles: true })); 
-                return true; 
-            } 
-        } 
-    } 
-    return false; 
-} 
+function select20Percent() {
+    var selects = document.querySelectorAll("select");
+    for (var i = 0; i < selects.length; i++) {
+        var opts = selects[i].options;
+        for (var j = 0; j < opts.length; j++) {
+            if (opts[j].text.includes("20")) {
+                selects[i].selectedIndex = j;
+                selects[i].dispatchEvent(new Event("change", { bubbles: true }));
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
-function clickPlanBulkRepair() { 
-    var buttons = document.querySelectorAll("button,input[type=button]"); 
-    for (var i = 0; i < buttons.length; i++) { 
-        if ((buttons[i].innerText || buttons[i].value || "").toLowerCase().includes("plan bulk repair")) return humanClick(buttons[i]); 
-    } 
-    return false; 
-} 
+function clickPlanBulkRepair() {
+    var buttons = document.querySelectorAll("button,input[type=button]");
+    for (var i = 0; i < buttons.length; i++) {
+        if ((buttons[i].innerText || buttons[i].value || "").toLowerCase().includes("plan bulk repair")) return humanClick(buttons[i]);
+    }
+    return false;
+}
 
-function clickBulkCheck() { 
-    var wrapper = document.getElementById("popup") || document.getElementById("maintAction") || document.body; 
-    var btn = wrapper.querySelector('[onclick*="maint_plan_check_bulk.php"]') || wrapper.querySelector('[onclick*="maint_plan_check_bulk"]'); 
-    return btn ? humanClick(btn) : false; 
-} 
+function clickBulkCheck() {
+    var wrapper = document.getElementById("popup") || document.getElementById("maintAction") || document.body;
+    var btn = wrapper.querySelector('[onclick*="maint_plan_check_bulk.php"]') || wrapper.querySelector('[onclick*="maint_plan_check_bulk"]');
+    return btn ? humanClick(btn) : false;
+}
 
-function clickPlanesLowerThan250Hours() { 
-    var wrapper = document.getElementById("maintPlanAction"); 
-    if (!wrapper) return 0; 
-    var hoursElements = wrapper.querySelectorAll("div.col-sm-6 b.text-success, div[data-id] b.text-success"); 
-    var totalSelected = 0; 
-    hoursElements.forEach(function(el) { 
-        var hoursValue = parseInt(el.innerText.replace(/[^0-9]/g, ""), 10) || 999; 
-        if (hoursValue < 250) { 
-            var planeCard = el.closest(".col-sm-6") || el.closest("[data-id]"); 
-            if (planeCard && !planeCard.classList.contains("selected")) { 
-                humanClick(planeCard); 
-                totalSelected++; 
-            } 
-        } 
-    }); 
-    console.log("[AM4 Bot Log] Filter macro complete. Selected " + totalSelected + " aircraft variants with remaining hours under 250."); 
-    return totalSelected; 
-} 
+function clickPlanesLowerThan275Hours() {
+    var wrapper = document.getElementById("maintPlanAction");
+    if (!wrapper) return 0;
+    var hoursElements = wrapper.querySelectorAll("div.col-sm-6 b.text-success, div[data-id] b.text-success");
+    var totalSelected = 0;
+    hoursElements.forEach(function(el) {
+        var hoursValue = parseInt(el.innerText.replace(/[^0-9]/g, ""), 10) || 999;
+        if (hoursValue < 275) {
+            var planeCard = el.closest(".col-sm-6") || el.closest("[data-id]");
+            if (planeCard && !planeCard.classList.contains("selected")) {
+                humanClick(planeCard);
+                totalSelected++;
+            }
+        }
+    });
+    console.log("[AM4 Bot Log] Filter macro complete. Selected " + totalSelected + " aircraft variants with remaining hours under 275.");
+    return totalSelected;
+}
 
-function clickPlanBulkCheck() { 
-    var btn = document.querySelector("#bulk-check-btn"); 
-    if (btn) return humanClick(btn); 
-    var fallback = document.querySelector('button[onclick*="maint_plan_check_bulk.php"]') || document.querySelector('button[onclick*="mode=acheckAll"]'); 
-    return fallback ? humanClick(fallback) : false; 
+function clickPlanBulkCheck() {
+    var btn = document.querySelector("#bulk-check-btn");
+    if (btn) return humanClick(btn);
+    var fallback = document.querySelector('button[onclick*="maint_plan_check_bulk.php"]') || document.querySelector('button[onclick*="mode=acheckAll"]');
+    return fallback ? humanClick(fallback) : false;
 }
 
 //================================================================================
@@ -460,63 +460,63 @@ function clickPlanBulkCheck() {
 //================================================================================
 function runStandaloneRepairSequence() {
     if (!openMaintenancePopup()) { isMaintenanceRunning = false; return; }
-    
+
     setTimeout(function() {
         if (!clickPlanTab()) { finishVisualCloseAction(true); return; }
-        
+
         setTimeout(function() {
             if (!clickBulkRepair()) { finishVisualCloseAction(true); return; }
-            
+
             setTimeout(function() {
                 select20Percent();
-                
+
                 setTimeout(function() {
                     var form = document.getElementById("maintAction") || document.body;
                     var submitBtn = form.querySelector('button[onclick*="maint_plan_repair_bulk.php?mode=do"]');
-                    
+
                     if (!submitBtn && !form.innerHTML.includes("mode=do")) {
                         console.log("[AM4 Bot Log] Repair scan complete: 0 planes meet wear limit. Displaying visually for 3 seconds.");
                         setTimeout(function() { finishVisualCloseAction(true); }, 3000);
                         return;
                     }
-                    
+
                     clickPlanBulkRepair();
                     setTimeout(function() { finishVisualCloseAction(true); }, 1500);
-                    
+
                 }, 600);
             }, 800);
         }, 800);
-    }, 2000); 
+    }, 2000);
 }
 
 function runStandaloneCheckSequence() {
     if (!openMaintenancePopup()) { isCheckMaintenanceRunning = false; return; }
-    
+
     setTimeout(function() {
         if (!clickPlanTab()) { finishVisualCloseAction(false); return; }
-        
+
         setTimeout(function() {
             if (!clickBulkCheck()) { finishVisualCloseAction(false); return; }
-            
+
             setTimeout(function() {
-                var planesSelected = clickPlanesLowerThan250Hours();
-                
+                var planesSelected = clickPlanesLowerThan275Hours();
+
                 if (planesSelected === 0) {
-                    console.log("[AM4 Bot Log] Check scan complete: 0 planes under 250 hours. Displaying visually for 3 seconds.");
+                    console.log("[AM4 Bot Log] Check scan complete: 0 planes under 275 hours. Displaying visually for 3 seconds.");
                     setTimeout(function() { finishVisualCloseAction(false); }, 3000);
                     return;
                 }
-                
+
                 clickPlanBulkCheck();
                 setTimeout(function() { finishVisualCloseAction(false); }, 1500);
-                
-            }, 1000); 
+
+            }, 1000);
         }, 1200);
     }, 2000);
 }
 
 function finishVisualCloseAction(isRepairModule) {
-    // FIXED: Release browser focus away from the popup back to the main document body 
+    // FIXED: Release browser focus away from the popup back to the main document body
     // This allows the browser to legally update aria-hidden properties without blocking visual renders
     if (document.activeElement && document.activeElement.blur) {
         document.activeElement.blur();
@@ -531,16 +531,16 @@ function finishVisualCloseAction(isRepairModule) {
         window.originalClosePop = window.closePop;
         window.originalClosePop();
     }
-    
+
     if (typeof jQuery !== 'undefined') {
         jQuery('.modal-backdrop').remove();
     } else {
         document.querySelectorAll('.modal-backdrop').forEach(function(el) { el.remove(); });
     }
-    
+
     var lbl = document.getElementById('maintenanceStatusLabel');
     if (lbl) { lbl.innerText = 'Fleet Healthy'; lbl.style.color = '#5cb85c'; }
-    
+
     if (isRepairModule) {
         isMaintenanceRunning = false;
         clearTimeout(autoRepairTimeoutID);
@@ -556,16 +556,16 @@ function finishVisualCloseAction(isRepairModule) {
 
 //Part 9 of 13: Custom Multiplier Pricing Interceptor
 document.addEventListener('click', function (e) {
-    var btn = e.target.closest('#introAuto') || 
-              e.target.closest('[onclick*="ticketPriceSuggest"]') || 
+    var btn = e.target.closest('#introAuto') ||
+              e.target.closest('[onclick*="ticketPriceSuggest"]') ||
               (e.target.tagName === 'BUTTON' && e.target.innerText.toLowerCase().includes('auto'));
-    if (!btn) return; 
+    if (!btn) return;
 
     var originalOnclick = btn.getAttribute('onclick') || "";
     if (!originalOnclick.includes('ticketPriceSuggest')) return;
 
     var matchPatterns = originalOnclick.match(/ticketPriceSuggest\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)/);
-    
+
     var explicitBaseY = matchPatterns ? parseFloat(matchPatterns[1]) : 0;
     var explicitBaseJ = matchPatterns ? parseFloat(matchPatterns[2]) : 0;
     var explicitBaseF = matchPatterns ? parseFloat(matchPatterns[3]) : 0;
@@ -574,10 +574,10 @@ document.addEventListener('click', function (e) {
         var targetY = document.getElementById('eTicket') || document.getElementById('eSeat') || document.getElementById('price_y');
         var targetJ = document.getElementById('bTicket') || document.getElementById('bSeat') || document.getElementById('price_j');
         var targetF = document.getElementById('fTicket') || document.getElementById('fSeat') || document.getElementById('price_f');
-        
+
         var targetL = document.getElementById('price_l');
         var targetH = document.getElementById('price_h');
-        
+
         // A route is ONLY treated as Cargo if the First Class element (#fTicket) is missing from the display tree entirely
         var isCargoRoute = !targetF;
         var truncateToTwoDecimals = function(num) { return Math.floor(num * 100) / 100; };
@@ -636,13 +636,13 @@ document.addEventListener('click', function (e) {
                 if (targetF) {
                     // CRUCIAL GLOBAL OVERRIDE FIX FOR FIRST CLASS:
                     // The native game engine function `ticketPriceSuggest` gets called AFTER our event handler captures the click.
-                    // Because `ticketPriceSuggest` uses internal variable logic that populates First Class after Eco/Biz, it was 
+                    // Because `ticketPriceSuggest` uses internal variable logic that populates First Class after Eco/Biz, it was
                     // overwriting our custom 1.06 calculation value back to the game's default value inside the #fTicket input node box.
-                    // This block targets the exact #fTicket input value variable, applies our custom value, and explicitly bypasses 
+                    // This block targets the exact #fTicket input value variable, applies our custom value, and explicitly bypasses
                     // the game's underlying native price suggestion function by writing directly to both DOM states.
                     targetF.value = calcF.toString();
                     targetF.setAttribute('value', calcF.toString());
-                    
+
                     if (typeof jQuery !== 'undefined') {
                         jQuery(targetF).val(calcF).trigger('input').trigger('change');
                     } else {
@@ -657,7 +657,7 @@ document.addEventListener('click', function (e) {
                 } else if (typeof autoPrice === 'function') {
                     autoPrice(calcY, calcJ, calcF, Math.floor(baseY), 0);
                 }
-                
+
                 // FIXED PARSING SAFETY LAYER: Double check text input assignment inside a secondary microsecond delay cushion
                 setTimeout(function() {
                     var verifyF = document.getElementById('fTicket') || document.getElementById('fSeat') || document.getElementById('price_f');
@@ -671,7 +671,7 @@ document.addEventListener('click', function (e) {
                         }
                     }
                 }, 50);
-                
+
                 console.log("[AM4 Bot Log] Passenger Pricing Modified ➔ Eco: $" + calcY + " | Biz: $" + calcJ + " | First: $" + calcF);
             }
         }
@@ -881,50 +881,50 @@ function runVisualHubHighlighter() {
     // 2. ELITE AIRPORTS: Extracted exactly from the ultimate continental guide list
     var highYieldAirports = [
         // Asia
-        "Seoul Incheon", 
-        "Singapore Changi", 
-        "Hong Kong", 
-        "New Delhi", 
-        "Dubai International", 
+        "Seoul Incheon",
+        "Singapore Changi",
+        "Hong Kong",
+        "New Delhi",
+        "Dubai International",
         "Manama",
-        
+
         // Australia & Oceania
-        "Sydney intl", 
-        "Canberra", 
+        "Sydney intl",
+        "Canberra",
         "Nadi",
-        
+
         // Europe
-        "London Heathrow", 
-        "Amsterdam", 
-        "Frankfurt intl", 
+        "London Heathrow",
+        "Amsterdam",
+        "Frankfurt intl",
         "Paris Charles de Gaulle",
-        
+
         // North America
-       "New York John F. Kennedy", 
-        "Dallas Fort-Worth", 
-        "Chicago O'Hare", 
+       "New York John F. Kennedy",
+        "Dallas Fort-Worth",
+        "Chicago O'Hare",
         "Los Angeles",
-        
+
         // South America
-        "Sao Paolo Guarulhos", 
-        "Santiago de Chile", 
-        "Caracas", 
+        "Sao Paolo Guarulhos",
+        "Santiago de Chile",
+        "Caracas",
         "Buenos Aires int",
-        
+
         // Africa
-        "Tunis", 
-        "Luanda", 
+        "Tunis",
+        "Luanda",
         "Dakar L.S. Senghor"
     ];
-    
+
     var generalElements = document.querySelectorAll("#popup option, #popup tr, .modal-body td");
     generalElements.forEach(function(el) {
         var text = (el.innerText || el.textContent || "").trim();
         var shouldPaint = eliteCountries.includes(text) || highYieldAirports.includes(text);
-        
+
         if (el.tagName.toLowerCase() === 'td' || el.tagName.toLowerCase() === 'tr') {
             if (eliteCountries.includes(text) && !highYieldAirports.includes(text)) {
-                shouldPaint = false; 
+                shouldPaint = false;
             }
         }
 
@@ -936,7 +936,7 @@ function runVisualHubHighlighter() {
             el.style.fontWeight = "bold";
         }
     });
-    
+
     var airportSelector = document.getElementById("hubAirportSelector") || document.querySelector("#hubCityContainer select");
     if (airportSelector) {
         var options = airportSelector.querySelectorAll("option");
@@ -956,7 +956,9 @@ function runVisualHubHighlighter() {
     }
 }
 
-// PART 12 OF 13: LIVE FINANCIAL OVERLAY INTERFACE CARRIER
+//================================================================================
+// PART 12 OF 13: LIVE FINANCIAL OVERLAY INTERFACE CARRIER (ALLIANCE UPDATE)
+//================================================================================
 function buildFinancialOverlay() {
     if (document.getElementById('am4FinancialMetricsDashboard')) return;
     var container = document.createElement('div');
@@ -982,9 +984,11 @@ function buildFinancialOverlay() {
         '</div>',
         '<table style="width:100%; border-collapse:collapse;">',
         '<tr><td style="color:#aaa; padding:2px 0;">Est. Fleet ROI:</td><td id="metricOverlayROI" style="text-align:right; font-weight:bold; color:#10b981;">---</td></tr>',
-        '<tr><td style="color:#aaa; padding:2px 0;">Net Flow/Min:</td><td id="metricOverlayFlow" style="text-align:right; font-weight:bold; color:#38bdf8;">---</td></tr>',
+        '<tr><td style="color:#aaa; padding:2px 0;">Net Flow/Day:</td><td id="metricOverlayFlow" style="text-align:right; font-weight:bold; color:#38bdf8;">---</td></tr>',
         '<tr><td style="color:#aaa; padding:2px 0;">Avg Fuel Spend:</td><td id="metricOverlayFuelSpend" style="text-align:right; color:#f59e0b;">---</td></tr>',
         '<tr><td style="color:#aaa; padding:2px 0;">Avg CO2 Spend:</td><td id="metricOverlayCo2Spend" style="text-align:right; color:#f59e0b;">---</td></tr>',
+        '<tr><td style="color:#aaa; padding:2px 0; border-top:1px dashed #334155;">Alliance Cont/Flt:</td><td id="metricOverlayAllianceFlight" style="text-align:right; color:#c084fc; font-weight:bold;">---</td></tr>',
+        '<tr><td style="color:#aaa; padding:2px 0;">Alliance Cont/Day:</td><td id="metricOverlayAllianceDay" style="text-align:right; color:#c084fc; font-weight:bold;">---</td></tr>',
         '</table>',
         '<div style="font-size:9px; color:#64748b; margin-top:6px; border-top:1px dashed #334155; padding-top:4px; text-align:center;">Tracking network metrics real-time...</div>'
     ].join('');
@@ -996,7 +1000,13 @@ function buildFinancialOverlay() {
         });
     }
 }
-// PART 13 OF 13: FINANCIAL ROLLING SCRAPER MASTER CALCULATIONS
+
+//================================================================================
+// PART 13 OF 13: FINANCIAL ROLLING SCRAPER MASTER CALCULATIONS (DYNAMIC BANK VALUE ROI)
+//================================================================================
+var cachedAllianceContDay = 0;
+var cachedAllianceContFlight = 0;
+
 setInterval(function() {
     var overlayBox = document.getElementById('am4FinancialMetricsDashboard');
     if (!overlayBox || overlayBox.style.display === 'none') return;
@@ -1020,34 +1030,70 @@ setInterval(function() {
         combinedSum += val;
     });
     var flowPerMin = netRevenueIntervalTicks.length > 0 ? Math.floor((combinedSum / netRevenueIntervalTicks.length) * 6) : 0;
+    var flowPerDay = flowPerMin * 60 * 24;
+
+    // RESTORED FLEET ROI FIX: Automatically calculates how long it takes your fleet to duplicate your exact bank roll
     var displayRoi = "Infinite";
-    if (flowPerMin > 0) {
-        var approxCost = 45000000;
-        var daysToPayback = ((approxCost / flowPerMin) / 60 / 24);
+    if (flowPerDay > 0 && currentCash > 0) {
+        var daysToPayback = currentCash / flowPerDay;
         displayRoi = daysToPayback.toFixed(1) + " Days";
     }
     var fField = document.getElementById('metricOverlayFlow');
     var rField = document.getElementById('metricOverlayROI');
     var fuelField = document.getElementById('metricOverlayFuelSpend');
     var co2Field = document.getElementById('metricOverlayCo2Spend');
+    var allianceFlightField = document.getElementById('metricOverlayAllianceFlight');
+    var allianceDayField = document.getElementById('metricOverlayAllianceDay');
     if (fField) {
-        fField.innerText = (flowPerMin >= 0 ? "+" : "") + flowPerMin.toLocaleString() + " /m";
-        fField.style.color = flowPerMin >= 0 ? '#10b981' : '#ef4444';
+        fField.innerText = (flowPerDay >= 0 ? "+" : "") + flowPerDay.toLocaleString() + " /d";
+        fField.style.color = flowPerDay >= 0 ? '#10b981' : '#ef4444';
     }
     if (rField) {
         rField.innerText = displayRoi;
     }
     if (fuelField) {
         var baseFuel = typeof fuelPriceThreshold !== 'undefined' ? fuelPriceThreshold : 1000;
-        fuelField.innerText = "$" + Math.floor(baseFuel * 0.12).toLocaleString();
+        fuelField.innerText = "$" + Math.floor(baseFuel * 0.12 * 60 * 24).toLocaleString() + " /d";
     }
     if (co2Field) {
         var baseCo2 = typeof co2PriceThreshold !== 'undefined' ? co2PriceThreshold : 200;
-        co2Field.innerText = "$" + Math.floor(baseCo2 * 0.18).toLocaleString();
+        co2Field.innerText = "$" + Math.floor(baseCo2 * 0.18 * 60 * 24).toLocaleString() + " /d";
+    }
+
+    // DIRECT ALLIANCE SCRAPER OVERRIDE MAPPING
+    var liveAllianceCell = document.querySelector("#al-list-8409987 > td:nth-child(4)");
+    if (liveAllianceCell) {
+        var rawText = (liveAllianceCell.innerText || "").replace(/[^0-9]/g, '').trim();
+        var rawParsedInt = parseInt(rawText, 10) || 0;
+        if (rawParsedInt > 0) {
+            cachedAllianceContDay = rawParsedInt;
+            localStorage.setItem('am4_cached_alliance_day_v4', cachedAllianceContDay);
+
+            var flightVolumeCell = document.querySelector("#al-list-8409987 > td:nth-child(5)");
+            if (flightVolumeCell) {
+                var cleanFlightsNum = parseInt(flightVolumeCell.innerText.replace(/[^0-9]/g, ''), 10) || 1;
+                if (cleanFlightsNum > 0) {
+                    cachedAllianceContFlight = Math.floor(cachedAllianceContDay / (cleanFlightsNum / 10));
+                    localStorage.setItem('am4_cached_alliance_flight_v4', cachedAllianceContFlight);
+                }
+            }
+        }
+    } else {
+        cachedAllianceContDay = parseInt(localStorage.getItem('am4_cached_alliance_day_v4'), 10) || 0;
+        cachedAllianceContFlight = parseInt(localStorage.getItem('am4_cached_alliance_flight_v4'), 10) || 0;
+    }
+
+    if (allianceFlightField) {
+        allianceFlightField.innerText = cachedAllianceContFlight > 0 ? "$" + cachedAllianceContFlight.toLocaleString() : "---";
+    }
+    if (allianceDayField) {
+        allianceDayField.innerText = cachedAllianceContDay > 0 ? "$" + cachedAllianceContDay.toLocaleString() + " /d" : "---";
     }
 }, 10000);
 
-// MASTER CORE LAUNCHPAD SEQUENCE
+//================================================================================
+// MASTER CORE LAUNCHPAD SEQUENCE (RESTORED TO MATCH 10-SECOND REFRESH OVERLAY)
+//================================================================================
 (function() {
     'use strict';
     if (!window.location.href.includes('airlinemanager.com')) return;
@@ -1057,6 +1103,7 @@ setInterval(function() {
             window.L.LayerGroup.prototype.removeLayer = function(l) { return l ? origRemove.call(this, l) : this; };
         }
     }
+
     setTimeout(injectToggleControls, 2000);
     setTimeout(routeDistanceWatcher, 4000);
     setTimeout(cargoDemandWatcher, 4500);
@@ -1064,9 +1111,12 @@ setInterval(function() {
     setTimeout(scanMarketplaceForBestHubs, 5000);
     setTimeout(autoRepairCheckLoop, 5200);
     setTimeout(autoCheckCheckLoop, 5500);
-    setTimeout(setupClosePopProtection, 5800);
+    setupClosePopProtection();
     setTimeout(buildFinancialOverlay, 6200);
-    
+
+    // FIXED: Your new Part 13 handles its own continuous 10-second loop timing natively via setInterval.
+    // The 30-minute backup timers and duplicate executeFinancialOverlayCycle overrides have been completely removed.
+
     creationPricingObserver.observe(document.body, { childList: true, subtree: true });
     console.log("[AM4 Bot Log] Master layout lifecycle extension successfully initialized.");
 })();
