@@ -940,8 +940,19 @@ function buildDashboardConfigurationCenterWindow() {
     panelWindowElement.id = 'am4SuiteConfigurationControlCenterWindow';
 
     var currentSide = localStorage.getItem('am4_cfg_screen_side') || 'Bottom';
-    var savedCountries = localStorage.getItem('am4_cfg_elite_countries') || "South Korea\nSingapore\nHong Kong\nIndia\nUAE\nBahrain";
-    var savedAirports = localStorage.getItem('am4_cfg_high_yield_airports') || "Seoul Incheon\nSingapore Changi\nHong Kong\nNew Delhi\nDubai International\nManama";
+
+    // CORE STABILITY FIX: If the stored value is missing or an empty string, force-inject the full master list arrays
+    var savedCountries = localStorage.getItem('am4_cfg_elite_countries');
+    if (!savedCountries || savedCountries.trim() === "") {
+        savedCountries = "South Korea\nSingapore\nHong Kong\nIndia\nUAE\nBahrain\nAustralia\nFiji\nUnited Kingdom\nNetherlands\nGermany\nFrance\nUnited States\nBrazil\nChile\nVenezuela\nArgentina\nTunisia\nAngola\nSenegal";
+        localStorage.setItem('am4_cfg_elite_countries', savedCountries);
+    }
+
+    var savedAirports = localStorage.getItem('am4_cfg_high_yield_airports');
+    if (!savedAirports || savedAirports.trim() === "") {
+        savedAirports = "Seoul Incheon\nSingapore Changi\nHong Kong\nNew Delhi\nDubai International\nManama\nSydney intl\nCanberra\nNadi\nLondon Heathrow\nAmsterdam\nFrankfurt intl\nParis Charles de Gaulle\nNew York John F. Kennedy\nDallas Fort-Worth\nChicago O'Hare\nLos Angeles\nSao Paolo Guarulhos\nSantiago de Chile\nCaracas\nBuenos Aires int\nTunis\nLuanda\nDakar L.S. Senghor";
+        localStorage.setItem('am4_cfg_high_yield_airports', savedAirports);
+    }
 
     panelWindowElement.innerHTML = '' +
         '<div class="am4-panel-header-toolbar">' +
@@ -953,7 +964,7 @@ function buildDashboardConfigurationCenterWindow() {
                 '<div class="am4-panel-section-title-label">Purchase Limits</div>' +
                 '<div class="am4-panel-input-group-row">' +
                     '<label>Fuel max price ($)</label>' +
-                    '<input type="number" id="am4_in_fuel_max" value="' + (localStorage.getItem('am4_cfg_fuel_max') || '1000') + '">' +
+                    '<input type="number" id="am4_in_fuel_max" value="' + (localStorage.getItem('am4_cfg_fuel_max') || '1100') + '">' +
                 '</div>' +
                 '<div class="am4-panel-input-group-row">' +
                     '<label>CO2 max price ($)</label>' +
@@ -972,11 +983,11 @@ function buildDashboardConfigurationCenterWindow() {
                 '</div>' +
                 '<div class="am4-panel-input-group-row">' +
                     '<label>A-Check below (hours)</label>' +
-                    '<input type="number" id="am4_in_acheck_hours" value="' + (localStorage.getItem('am4_cfg_acheck_hours') || '30') + '">' +
+                    '<input type="number" id="am4_in_acheck_hours" value="' + (localStorage.getItem('am4_cfg_acheck_hours') || '275') + '">' +
                 '</div>' +
                 '<div class="am4-panel-input-group-row">' +
                     '<label>Re-run every (hrs)</label>' +
-                    '<input type="number" id="am4_in_rerun_hours" value="' + (localStorage.getItem('am4_cfg_rerun_hours') || '8') + '">' +
+                    '<input type="number" id="am4_in_rerun_hours" value="' + (localStorage.getItem('am4_cfg_rerun_hours') || '4') + '">' +
                 '</div>' +
             '</div>' +
             '<div class="am4-panel-config-section-card">' +
@@ -1021,7 +1032,7 @@ function buildDashboardConfigurationCenterWindow() {
                 '<div class="am4-panel-section-title-label">Auto-Buy Marketing</div>' +
                 '<div class="am4-panel-input-group-row">' +
                     '<label>Check for expiry every (min)</label>' +
-                    '<input type="number" id="am4_in_mktg_expiry" value="' + (localStorage.getItem('am4_cfg_mktg_expiry') || '10') + '">' +
+                    '<input type="number" id="am4_in_mktg_expiry" value="' + (localStorage.getItem('am4_cfg_mktg_expiry') || '30') + '">' +
                 '</div>' +
             '</div>' +
             '<div class="am4-panel-config-section-card">' +
@@ -1038,25 +1049,36 @@ function buildDashboardConfigurationCenterWindow() {
                     '</select>' +
                 '</div>' +
             '</div>' +
-                '<div class="am4-panel-config-section-card">' +
-        '<div class="am4-panel-section-title-label">Campaigns</div>' +
-        '<div class="am4-panel-input-group-row">' +
-            '<label>Eco-friendly (pax + cargo) (type=5)</label>' +
-            '<input type="checkbox" id="am4_in_camp_eco" ' + (localStorage.getItem('am4_cfg_camp_eco') !== 'false' ? 'checked' : '') + '>' +
+            '<div class="am4-panel-config-section-card">' +
+                '<div class="am4-panel-section-title-label">Timers & Behavior</div>' +
+                '<div class="am4-panel-input-group-row">' +
+                    '<label>Timing randomness (± %)</label>' +
+                    '<input type="number" id="am4_in_time_rand" value="' + (localStorage.getItem('am4_cfg_time_rand') || '25') + '">' +
+                '</div>' +
+                '<div class="am4-panel-input-group-row">' +
+                    '<label>Restore toggles after reload</label>' +
+                    '<input type="checkbox" id="am4_in_restore_toggles" ' + (localStorage.getItem('am4_cfg_restore_toggles') !== 'false' ? 'checked' : '') + '>' +
+                '</div>' +
+            '</div>' +
+            '<div class="am4-panel-config-section-card">' +
+                '<div class="am4-panel-section-title-label">Campaigns</div>' +
+                '<div class="am4-panel-input-group-row">' +
+                    '<label>Eco-friendly (pax + cargo) (type=5)</label>' +
+                    '<input type="checkbox" id="am4_in_camp_eco" ' + (localStorage.getItem('am4_cfg_camp_eco') !== 'false' ? 'checked' : '') + '>' +
+                '</div>' +
+                '<div class="am4-panel-input-group-row">' +
+                    '<label>Airline reputation (pax) (type=1)</label>' +
+                    '<input type="checkbox" id="am4_in_camp_rep_pax" ' + (localStorage.getItem('am4_cfg_camp_rep_pax') !== 'false' ? 'checked' : '') + '>' +
+                '</div>' +
+                '<div class="am4-panel-input-group-row">' +
+                    '<label>Cargo reputation (type=2)</label>' +
+                    '<input type="checkbox" id="am4_in_camp_rep_cargo" ' + (localStorage.getItem('am4_cfg_camp_rep_cargo') === 'true' ? 'checked' : '') + '>' +
+                '</div>' +
+                '<div class="am4-panel-input-group-row">' +
+                    '<label>Charter reputation (type=10)</label>' +
+                '<input type="checkbox" id="am4_in_camp_charter" ' + (localStorage.getItem('am4_cfg_camp_charter') === 'true' ? 'checked' : '') + '>' +
+            '</div>' +
         '</div>' +
-        '<div class="am4-panel-input-group-row">' +
-            '<label>Airline reputation (pax) (type=1)</label>' +
-            '<input type="checkbox" id="am4_in_camp_rep_pax" ' + (localStorage.getItem('am4_cfg_camp_rep_pax') !== 'false' ? 'checked' : '') + '>' +
-        '</div>' +
-        '<div class="am4-panel-input-group-row">' +
-            '<label>Cargo reputation (type=2)</label>' +
-            '<input type="checkbox" id="am4_in_camp_rep_cargo" ' + (localStorage.getItem('am4_cfg_camp_rep_cargo') === 'true' ? 'checked' : '') + '>' +
-        '</div>' +
-        '<div class="am4-panel-input-group-row">' +
-            '<label>Charter reputation (type=10)</label>' +
-            '<input type="checkbox" id="am4_in_camp_charter" ' + (localStorage.getItem('am4_cfg_camp_charter') === 'true' ? 'checked' : '') + '>' +
-        '</div>' +
-    '</div>' +
             '<div class="am4-panel-config-section-card">' +
                 '<div class="am4-panel-section-title-label">Best Hub Lists</div>' +
                 '<div class="am4-panel-textarea-wrapper">' +
@@ -1076,42 +1098,67 @@ function buildDashboardConfigurationCenterWindow() {
 
     document.body.appendChild(panelWindowElement);
 
-        document.getElementById('am4_btn_close_panel_x').addEventListener('click', function() { panelWindowElement.style.display = 'none'; });
-document.getElementById('am4_btn_panel_reset').addEventListener('click', resetDashboardDefaultsWorkspaceData);
-document.getElementById('am4_btn_panel_save').addEventListener('click', saveDashboardPanelConfigurationInputs);
-
+    document.getElementById('am4_btn_close_panel_x').addEventListener('click', function() {
+        panelWindowElement.style.display = 'none';
+    });
+    document.getElementById('am4_btn_panel_reset').addEventListener('click', resetDashboardDefaultsWorkspaceData);
+    document.getElementById('am4_btn_panel_save').addEventListener('click', saveDashboardPanelConfigurationInputs);
 }
 
 function saveDashboardPanelConfigurationInputs() {
-    localStorage.setItem('am4_cfg_fuel_max', document.getElementById('am4_in_fuel_max').value);
-    localStorage.setItem('am4_cfg_co2_max', document.getElementById('am4_in_co2_max').value);
-    localStorage.setItem('am4_cfg_scan_mins', document.getElementById('am4_in_scan_mins').value);
-    localStorage.setItem('am4_cfg_repair_wear', document.getElementById('am4_in_repair_wear').value);
-    localStorage.setItem('am4_cfg_acheck_hours', document.getElementById('am4_in_acheck_hours').value);
-    localStorage.setItem('am4_cfg_rerun_hours', document.getElementById('am4_in_rerun_hours').value);
-    localStorage.setItem('am4_cfg_mult_eco', document.getElementById('am4_in_mult_eco').value);
-    localStorage.setItem('am4_cfg_mult_biz', document.getElementById('am4_in_mult_biz').value);
-    localStorage.setItem('am4_cfg_mult_first', document.getElementById('am4_in_mult_first').value);
-    localStorage.setItem('am4_cfg_mult_cargo_l', document.getElementById('am4_in_mult_cargo_l').value);
-    localStorage.setItem('am4_cfg_mult_cargo_h', document.getElementById('am4_in_mult_cargo_h').value);
-    localStorage.setItem('am4_cfg_depart_mins', document.getElementById('am4_in_depart_mins').value);
-    localStorage.setItem('am4_cfg_max_clicks', document.getElementById('am4_in_max_clicks').value);
-    localStorage.setItem('am4_cfg_pause_secs', document.getElementById('am4_in_pause_secs').value);
-    localStorage.setItem('am4_cfg_mktg_expiry', document.getElementById('am4_in_mktg_expiry').value);
-    localStorage.setItem('am4_cfg_show_overlay', document.getElementById('am4_in_show_overlay').checked.toString());
-    localStorage.setItem('am4_cfg_screen_side', document.getElementById('am4_in_screen_side').value);
-    localStorage.setItem('am4_cfg_time_rand', document.getElementById('am4_in_time_rand').value);
-    localStorage.setItem('am4_cfg_restore_toggles', document.getElementById('am4_in_restore_toggles').checked.toString());
-    localStorage.setItem('am4_cfg_camp_eco', document.getElementById('am4_in_camp_eco').checked.toString());
-    localStorage.setItem('am4_cfg_camp_rep_pax', document.getElementById('am4_in_camp_rep_pax').checked.toString());
-    localStorage.setItem('am4_cfg_camp_rep_cargo', document.getElementById('am4_in_camp_rep_cargo').checked.toString());
-    localStorage.setItem('am4_cfg_camp_charter', document.getElementById('am4_in_camp_charter').checked.toString());
-    localStorage.setItem('am4_cfg_elite_countries', document.getElementById('am4_tx_elite_countries').value);
-    localStorage.setItem('am4_cfg_high_yield_airports', document.getElementById('am4_tx_high_yield_airports').value);
+    // 1. SAFE DATA EXTRACTION LAYER: Fallbacks to system defaults instantly if a field is left empty or malformed
+    var fMaxRaw = document.getElementById('am4_in_fuel_max') ? document.getElementById('am4_in_fuel_max').value : '1000';
+    var cMaxRaw = document.getElementById('am4_in_co2_max') ? document.getElementById('am4_in_co2_max').value : '200';
+    var sMinsRaw = document.getElementById('am4_in_scan_mins') ? document.getElementById('am4_in_scan_mins').value : '15';
+    var rWearRaw = document.getElementById('am4_in_repair_wear') ? document.getElementById('am4_in_repair_wear').value : '20';
+    var aCheckRaw = document.getElementById('am4_in_acheck_hours') ? document.getElementById('am4_in_acheck_hours').value : '30';
+    var rHrsRaw = document.getElementById('am4_in_rerun_hours') ? document.getElementById('am4_in_rerun_hours').value : '8';
 
-    window.fuelPriceThreshold = parseInt(document.getElementById('am4_in_fuel_max').value, 10) || 1000;
-    window.co2PriceThreshold = parseInt(document.getElementById('am4_in_co2_max').value, 10) || 200;
-    window.maxWearThreshold = parseInt(document.getElementById('am4_in_repair_wear').value, 10) || 20;
+    var mEcoRaw = document.getElementById('am4_in_mult_eco') ? document.getElementById('am4_in_mult_eco').value : '1.1';
+    var mBizRaw = document.getElementById('am4_in_mult_biz') ? document.getElementById('am4_in_mult_biz').value : '1.08';
+    var mFirstRaw = document.getElementById('am4_in_mult_first') ? document.getElementById('am4_in_mult_first').value : '1.06';
+    var mCargoLRaw = document.getElementById('am4_in_mult_cargo_l') ? document.getElementById('am4_in_mult_cargo_l').value : '1.1';
+    var mCargoHRaw = document.getElementById('am4_in_mult_cargo_h') ? document.getElementById('am4_in_mult_cargo_h').value : '1.08';
+
+    var dMinsRaw = document.getElementById('am4_in_depart_mins') ? document.getElementById('am4_in_depart_mins').value : '15';
+    var mClicksRaw = document.getElementById('am4_in_max_clicks') ? document.getElementById('am4_in_max_clicks').value : '15';
+    var pSecsRaw = document.getElementById('am4_in_pause_secs') ? document.getElementById('am4_in_pause_secs').value : '8';
+    var mExpRaw = document.getElementById('am4_in_mktg_expiry') ? document.getElementById('am4_in_mktg_expiry').value : '10';
+    var tRandRaw = document.getElementById('am4_in_time_rand') ? document.getElementById('am4_in_time_rand').value : '25';
+
+    // 2. BACKSTANCE ALLOCATION: Commit cleaned string variables to localStorage cache safely
+    localStorage.setItem('am4_cfg_fuel_max', fMaxRaw || '1000');
+    localStorage.setItem('am4_cfg_co2_max', cMaxRaw || '200');
+    localStorage.setItem('am4_cfg_scan_mins', sMinsRaw || '15');
+    localStorage.setItem('am4_cfg_repair_wear', rWearRaw || '20');
+    localStorage.setItem('am4_cfg_acheck_hours', aCheckRaw || '30');
+    localStorage.setItem('am4_cfg_rerun_hours', rHrsRaw || '8');
+    localStorage.setItem('am4_cfg_mult_eco', mEcoRaw || '1.1');
+    localStorage.setItem('am4_cfg_mult_biz', mBizRaw || '1.08');
+    localStorage.setItem('am4_cfg_mult_first', mFirstRaw || '1.06');
+    localStorage.setItem('am4_cfg_mult_cargo_l', mCargoLRaw || '1.1');
+    localStorage.setItem('am4_cfg_mult_cargo_h', mCargoHRaw || '1.08');
+    localStorage.setItem('am4_cfg_depart_mins', dMinsRaw || '15');
+    localStorage.setItem('am4_cfg_max_clicks', mClicksRaw || '15');
+    localStorage.setItem('am4_cfg_pause_secs', pSecsRaw || '8');
+    localStorage.setItem('am4_cfg_mktg_expiry', mExpRaw || '10');
+    localStorage.setItem('am4_cfg_time_rand', tRandRaw || '25');
+
+    // 3. BOOLEAN ELEMENT RESOLUTION: Handle checkboxes and selector dropdown boxes safely
+    if (document.getElementById('am4_in_show_overlay')) localStorage.setItem('am4_cfg_show_overlay', document.getElementById('am4_in_show_overlay').checked.toString());
+    if (document.getElementById('am4_in_screen_side')) localStorage.setItem('am4_cfg_screen_side', document.getElementById('am4_in_screen_side').value);
+    if (document.getElementById('am4_in_restore_toggles')) localStorage.setItem('am4_cfg_restore_toggles', document.getElementById('am4_in_restore_toggles').checked.toString());
+    if (document.getElementById('am4_in_camp_eco')) localStorage.setItem('am4_cfg_camp_eco', document.getElementById('am4_in_camp_eco').checked.toString());
+    if (document.getElementById('am4_in_camp_rep_pax')) localStorage.setItem('am4_cfg_camp_rep_pax', document.getElementById('am4_in_camp_rep_pax').checked.toString());
+    if (document.getElementById('am4_in_camp_rep_cargo')) localStorage.setItem('am4_cfg_camp_rep_cargo', document.getElementById('am4_in_camp_rep_cargo').checked.toString());
+    if (document.getElementById('am4_in_camp_charter')) localStorage.setItem('am4_cfg_camp_charter', document.getElementById('am4_in_camp_charter').checked.toString());
+    if (document.getElementById('am4_tx_elite_countries')) localStorage.setItem('am4_cfg_elite_countries', document.getElementById('am4_tx_elite_countries').value);
+    if (document.getElementById('am4_tx_high_yield_airports')) localStorage.setItem('am4_cfg_high_yield_airports', document.getElementById('am4_tx_high_yield_airports').value);
+
+    // 4. INTEGER TYPE PROTECTION: Enforces strict numerical fallback matching to wipe out NaN values completely
+    window.fuelPriceThreshold = parseInt(fMaxRaw, 10) || 1000;
+    window.co2PriceThreshold = parseInt(cMaxRaw, 10) || 200;
+    window.maxWearThreshold = parseInt(rWearRaw, 10) || 20;
 
     var overlay = document.getElementById('am4FinancialMetricsDashboard');
     if (overlay) {
@@ -1122,7 +1169,8 @@ function saveDashboardPanelConfigurationInputs() {
             overlay.style.top = 'auto'; overlay.style.bottom = '20px';
         }
     }
-    console.log("[AM4 Bot Log] Configuration dashboard parameters successfully compiled.");
+
+    console.log("[AM4 Bot Log] Configuration settings panel drawer compiled cleanly with NaN protection filters.");
     document.getElementById('am4SuiteConfigurationControlCenterWindow').style.display = 'none';
 }
 
@@ -1831,29 +1879,246 @@ function paxDemandWatcher() {
 }
 
 //================================================================================
-// ADD-ON FEATURE: AUTO-RESEARCH HIGH-YIELD ROUTE AUTOMATED ELIMINATION & POST-PRICING
+// 1. UNIVERSAL ADD-ON FEATURE: CLICK-TRIGGERED PRE-FLIGHT FUNNEL INTERCEPTOR
 //================================================================================
-var hasAutoSelectedRouteThisOpen = false;
-var isPricingWorkflowActive = false;
-var rejectedRouteIds = [];
+// MASTER GLOBAL MAP MATRIX: SECURES LIFECYCLE VARIABLES WITHOUT NO-UNDEF CRASHES
+if (!window.am4) window.am4 = {};
+if (typeof window.am4.maxRange === 'undefined') window.am4.maxRange = 0;
+if (typeof window.am4.minRunway === 'undefined') window.am4.minRunway = 0;
+if (typeof window.am4.hubOrigin === 'undefined') window.am4.hubOrigin = "";
+if (typeof window.am4.extractInterval === 'undefined') window.am4.extractInterval = null;
+if (typeof window.am4.funnelLockID === 'undefined') window.am4.funnelLockID = null;
+if (typeof window.am4.isSearchFired === 'undefined') window.am4.isSearchFired = false;
+if (typeof window.am4.isRouteSelected === 'undefined') window.am4.isRouteSelected = false;
+if (typeof window.am4.isPricingActive === 'undefined') window.am4.isPricingActive = false;
+if (typeof window.am4.rejectedRoutes === 'undefined') window.am4.rejectedRoutes = [];
 
-const clearResearchLockObserver = new MutationObserver(function() {
-    var researchTable = document.getElementById("list") || document.querySelector("#research_results_container");
-    if (!researchTable) {
-        hasAutoSelectedRouteThisOpen = false;
-        isPricingWorkflowActive = false;
-        rejectedRouteIds = [];
+document.addEventListener('click', function(e) {
+    var detailsBtn = e.target.closest('button[onclick*="mode=details"]') ||
+                     e.target.closest('#singleDeparter button[onclick*="details"]');
+    if (!detailsBtn) return;
+
+    console.log("[AM4 Bot Log] Fresh Details click detected. Executing universal memory wipe...");
+
+    if (window.am4.extractInterval) {
+        clearInterval(window.am4.extractInterval);
+        window.am4.extractInterval = null;
+    }
+    if (window.am4.funnelLockID) {
+        clearTimeout(window.am4.funnelLockID);
+        window.am4.funnelLockID = null;
+    }
+
+    var staleLocks = document.querySelectorAll(".bot-funnel-filled-lock");
+    staleLocks.forEach(function(el) { el.classList.remove("bot-funnel-filled-lock"); });
+
+    var evaluatedLocks = document.querySelectorAll(".bot-panel-evaluated-lock");
+    evaluatedLocks.forEach(function(el) { el.classList.remove("bot-panel-evaluated-lock"); });
+
+    // Cold reboot execution parameters inside global core registers
+    window.am4.maxRange = 0;
+    window.am4.minRunway = 0;
+    window.am4.hubOrigin = "";
+    sessionStorage.removeItem("bot_active_aircraft_range");
+
+    window.am4.isSearchFired = false;
+    window.am4.isRouteSelected = false;
+    window.am4.isPricingActive = false;
+
+    var extractionRetryTicks = 0;
+    window.am4.extractInterval = setInterval(function() {
+        extractionRetryTicks++;
+        if (extractionRetryTicks > 50) {
+            clearInterval(window.am4.extractInterval);
+            console.log("[AM4 Bot Log] Specifications extraction failure: Grounded panel timed out.");
+            return;
+        }
+
+        // TARGET EXACT DOM NODES PROVIDED BY USER BYPASSING ALL FUZZY ESTIMATIONS
+        var rangeRowNode = document.querySelector("#detailsGroundedBg > div.col-sm-6.bg-light.border > div > div:nth-child(1)");
+        var runwayNumberSpan = document.querySelector("#detailsGroundedBg > div.col-sm-6.bg-light.border > div > div:nth-child(2) > span:nth-child(7)");
+        var departAirportSpan = document.querySelector("#detailsGroundedBg > div.col-sm-6.text-center > div > div:nth-child(2) > span.s-text");
+        var detailsPanelCard = document.getElementById('detailsGroundedBg') || document.querySelector('#detailsAction');
+
+        if (!rangeRowNode || !runwayNumberSpan || !departAirportSpan || !detailsPanelCard) return;
+
+        var rangeTextRaw = (rangeRowNode.innerText || "").toLowerCase();
+        var runwayTextRaw = (runwayNumberSpan.innerText || "").toLowerCase().trim();
+        var departAirportRaw = (departAirportSpan.innerText || "").toLowerCase().trim();
+
+        // 1. PINPOINT RANGE SCRAPER
+        if (window.am4.maxRange === 0) {
+            var rangeMatch = rangeTextRaw.match(/([0-9,]{4,6})/);
+            if (rangeMatch) {
+                window.am4.maxRange = parseInt(rangeMatch[0].replace(/[^0-9]/g, ""), 10) || 0;
+                sessionStorage.setItem("bot_active_aircraft_range", window.am4.maxRange.toString());
+                console.log("[AM4 Bot Log] Node Path Success: Captured Range Limit ➔ " + window.am4.maxRange + " km");
+            }
+        }
+
+        // 2. PINPOINT RUNWAY EXTRACTION LAYER
+        if (window.am4.minRunway === 0 && runwayTextRaw.length > 0) {
+            var parsedRunway = parseInt(runwayTextRaw.replace(/[^0-9]/g, ""), 10) || 0;
+            if (parsedRunway > 10) {
+                window.am4.minRunway = parsedRunway;
+                console.log("[AM4 Bot Log] Node Path Success: Captured True Aircraft Min Runway ➔ " + window.am4.minRunway + " m");
+            }
+        }
+
+        // 3. PINPOINT DEPARTING AIRPORT CODE EXTRACTION LAYER
+        if (window.am4.hubOrigin === "" && departAirportRaw.length > 1) {
+            var cleanAirportTag = departAirportRaw.replace(/[^a-z0-9, ]/g, "").trim();
+            if (cleanAirportTag.length >= 2) {
+                window.am4.hubOrigin = cleanAirportTag;
+                console.log("[AM4 Bot Log] Node Path Success: Captured True Departing Airport Tag ➔ " + window.am4.hubOrigin);
+            }
+        }
+
+        // 4. ADVANCEMENT HANDSHAKE
+        if (window.am4.maxRange > 100 && window.am4.minRunway > 10 && window.am4.hubOrigin !== "") {
+            clearInterval(window.am4.extractInterval);
+            window.am4.extractInterval = null;
+
+            var topResearchTabBtn = document.querySelector("#popBtn3") ||
+                                     document.querySelector('button[onclick*="research_main.php"]') ||
+                                     document.querySelector('button[id="popBtn3"]');
+
+            if (topResearchTabBtn) {
+                console.log("[AM4 Bot Log] Step 2: Universal parameters verified! Range: " + window.am4.maxRange + "km | Runway: " + window.am4.minRunway + "m | Hub: " + window.am4.hubOrigin);
+                setTimeout(function() { topResearchTabBtn.click(); }, 300);
+            }
+        }
+    }, 100);
+});
+
+//================================================================================
+// 2. REPAIRED ADD-ON FEATURE: MASTER SHIELD CLOSURE STATE RESET HOOK
+//================================================================================
+var clearResearchLockObserver = new MutationObserver(function() {
+    var globalMasterPopupFrame = document.getElementById("popup");
+    if (!globalMasterPopupFrame) {
+        window.am4.isRouteSelected = false;
+        window.am4.isPricingActive = false;
+        window.am4.rejectedRoutes = [];
+        window.am4.maxRange = 0;
+        window.am4.minRunway = 0;
+        window.am4.hubOrigin = "";
+        window.am4.isSearchFired = false;
+        if (window.am4.funnelLockID) { clearTimeout(window.am4.funnelLockID); window.am4.funnelLockID = null; }
     }
 });
 clearResearchLockObserver.observe(document.body, { childList: true, subtree: true });
 
+//================================================================================
+// 3. REPAIRED PART 2: INFINITE STEP-BY-STEP SIMULATION & AUTO-RESET ENGINE
+//================================================================================
+var researchFormObserver = new MutationObserver(function() {
+    var hubDropdownNode = document.querySelector("#hubSelect");
+    var maxDistanceInputNode = document.querySelector("#maxDist");
+    var minRunwayInputNode = document.querySelector("#rwyLength");
+    var executeSearchBtnNode = document.querySelector("#resSearch");
+
+    if (hubDropdownNode && maxDistanceInputNode && minRunwayInputNode && executeSearchBtnNode) {
+        if (hubDropdownNode.offsetParent === null || maxDistanceInputNode.offsetParent === null) return;
+
+        if (!hubDropdownNode.classList.contains("bot-funnel-filled-lock")) {
+            window.am4.isSearchFired = false;
+            hubDropdownNode.classList.add("bot-funnel-filled-lock");
+            console.log("[AM4 Bot Log] Optimization panel caught. Initializing hardware event cascade...");
+
+            var legacyListBody = document.getElementById("list") || document.querySelector(".research-results");
+            if (legacyListBody) legacyListBody.innerHTML = "";
+            if (window.am4.funnelLockID) clearTimeout(window.am4.funnelLockID);
+
+            var currentCascadeStep = 1;
+            var targetIndexValue = -1;
+            var targetValueAttribute = "";
+
+            if (typeof window.am4.hubOrigin !== 'undefined' && window.am4.hubOrigin.length > 1) {
+                var dropdownOptionsList = hubDropdownNode.querySelectorAll("option");
+                var originLower = window.am4.hubOrigin.toLowerCase().trim().replace(/[^a-z0-9]/g, "");
+                var searchTokens = [];
+                if (originLower.length >= 3) {
+                    for (var s = 0; s <= originLower.length - 3; s++) {
+                        var chunkSlice = originLower.substring(s, s + 3);
+                        if (searchTokens.indexOf(chunkSlice) === -1) searchTokens.push(chunkSlice);
+                    }
+                } else { searchTokens.push(originLower); }
+
+                var highestWordMatchScoreCount = 0;
+                for (var i = 0; i < dropdownOptionsList.length; i++) {
+                    var optionTextClean = (dropdownOptionsList[i].innerText || dropdownOptionsList[i].textContent || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                    var currentOptionMatchScore = 0;
+                    for (var t = 0; t < searchTokens.length; t++) {
+                        if (optionTextClean.indexOf(searchTokens[t]) !== -1) currentOptionMatchScore++;
+                    }
+                    if (currentOptionMatchScore > highestWordMatchScoreCount) {
+                        highestWordMatchScoreCount = currentOptionMatchScore;
+                        targetIndexValue = i;
+                        targetValueAttribute = dropdownOptionsList[i].value;
+                    }
+                }
+            }
+
+            if (targetIndexValue === -1) targetIndexValue = 0;
+
+            var forceNativeStateUpdateInField = function(inputNode, targetValueString) {
+                try {
+                    var valueSetterDescriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
+                    var nativeValueSetterMethod = valueSetterDescriptor ? valueSetterDescriptor.set : null;
+                    if (nativeValueSetterMethod) nativeValueSetterMethod.call(inputNode, targetValueString);
+                    else inputNode.value = targetValueString;
+                } catch (err) { inputNode.value = targetValueString; }
+                inputNode.dispatchEvent(new Event('input', { bubbles: true }));
+                inputNode.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+
+            var runCascadeIterationCircuit = function() {
+                var cleanTargetRangeString = (window.am4.maxRange > 100) ? window.am4.maxRange.toString().replace(/[^0-9]/g, "") : maxDistanceInputNode.value;
+                var cleanTargetRunwayString = (window.am4.minRunway > 10) ? window.am4.minRunway.toString().replace(/[^0-9]/g, "") : minRunwayInputNode.value;
+
+                switch(currentCascadeStep) {
+                    case 1:
+                        hubDropdownNode.value = targetValueAttribute;
+                        hubDropdownNode.selectedIndex = targetIndexValue;
+                        var nativeChangeEvent = document.createEvent("HTMLEvents");
+                        nativeChangeEvent.initEvent("change", true, true);
+                        hubDropdownNode.dispatchEvent(nativeChangeEvent);
+                        currentCascadeStep = 2;
+                        window.am4.funnelLockID = setTimeout(runCascadeIterationCircuit, 450);
+                        break;
+                    case 2:
+                        forceNativeStateUpdateInField(maxDistanceInputNode, cleanTargetRangeString);
+                        currentCascadeStep = 3;
+                        window.am4.funnelLockID = setTimeout(runCascadeIterationCircuit, 450);
+                        break;
+                    case 3:
+                        forceNativeStateUpdateInField(minRunwayInputNode, cleanTargetRunwayString);
+                        currentCascadeStep = 4;
+                        window.am4.funnelLockID = setTimeout(runCascadeIterationCircuit, 550);
+                        break;
+                    case 4:
+                        console.log("[AM4 Bot Log] Cascade Step 4: Verification successful! Clicking Search...");
+                        setTimeout(function() { executeSearchBtnNode.click(); }, 200);
+                        break;
+                }
+            };
+            runCascadeIterationCircuit();
+        }
+    }
+});
+researchFormObserver.observe(document.body, { childList: true, subtree: true });
+//================================================================================
+// 4. REPAIRED PART 3: PERMANENT BACKGROUND ROUTE EVALUATOR & INFINITE SCHEDULER
+//================================================================================
 setInterval(function() {
     var rDetailsPane = document.getElementById("rDetails") || document.querySelector(".route-details-pop");
+    var autoPriceBtn = document.querySelector("#introAuto");
+    var finalRouteConfirmBtn = document.querySelector("#btnCreateNewRoute");
 
-    if (rDetailsPane && rDetailsPane.innerText && rDetailsPane.innerText.trim().length > 10) {
+    if (rDetailsPane && rDetailsPane.innerText && rDetailsPane.innerText.trim().length > 10 && !autoPriceBtn && !finalRouteConfirmBtn) {
         var activeAcCount = -1;
         var foundAcRow = false;
-
         var detailRows = rDetailsPane.querySelectorAll("table.table-sm.m-text > tbody > tr");
 
         detailRows.forEach(function(row) {
@@ -1871,130 +2136,89 @@ setInterval(function() {
         if (!foundAcRow || activeAcCount === -1) return;
 
         if (activeAcCount >= 2) {
-            console.log("[AM4 Bot Log] Route Rejected: Found " + activeAcCount + " A/C on route. Backstepping...");
+            console.log("[AM4 Bot Log] Route Rejected. Backstepping...");
             var openRouteRow = document.querySelector(".row.border.sorter.bot-clicking-active") || document.querySelector(".bot-clicking-active");
             if (openRouteRow) {
-                var labelEl = openRouteRow.querySelector(".exo") || openRouteRow.querySelector("b") || openRouteRow;
+                var labelEl = openRouteRow.querySelector(".exo") || openRouteRow;
                 var cleanRouteString = labelEl.innerText.replace("[⭐ HIGH YIELD]", "").trim();
-                rejectedRouteIds.push(cleanRouteString);
-                openRouteRow.classList.remove("bot-clicking-active");
-                openRouteRow.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
-                openRouteRow.style.border = "1px solid #ef4444";
+                window.am4.rejectedRoutes.push(cleanRouteString);
+                if (openRouteRow.parentNode) openRouteRow.parentNode.removeChild(openRouteRow);
             }
             var backBtn = document.querySelector("#rDetails > button");
             if (backBtn) {
-                hasAutoSelectedRouteThisOpen = false;
+                window.am4.isRouteSelected = false;
+                window.am4.isPricingActive = false;
+                window.am4.isSearchFired = false;
+                var activeFormLock = document.querySelector(".bot-funnel-filled-lock");
+                if (activeFormLock) activeFormLock.classList.remove("bot-funnel-filled-lock");
                 rDetailsPane.innerHTML = "";
                 backBtn.click();
             }
             return;
         } else {
-            isPricingWorkflowActive = true;
-
+            window.am4.isPricingActive = true;
             var createBtn = document.querySelector("#sugNewRoute");
             if (createBtn && !createBtn.classList.contains("bot-creation-fired")) {
                 createBtn.classList.add("bot-creation-fired");
-                console.log("[AM4 Bot Log] MATCH CONFIRMED: Found " + activeAcCount + " A/C. Launching automatic route creation panel...");
                 createBtn.click();
             }
             return;
         }
     }
 
-    var finalRouteConfirmBtn = document.querySelector("#btnCreateNewRoute");
-    if (finalRouteConfirmBtn && !finalRouteConfirmBtn.classList.contains("bot-route-creation-submitted")) {
-        finalRouteConfirmBtn.classList.add("bot-route-creation-submitted");
-        console.log("[AM4 Bot Log] Step 2: Securing route purchase first...");
-        finalRouteConfirmBtn.click();
-        return;
-    }
-
-    var autoPriceBtn = document.querySelector("#introAuto");
     if (autoPriceBtn && !autoPriceBtn.classList.contains("bot-post-autoprice-fired")) {
         autoPriceBtn.classList.add("bot-post-autoprice-fired");
-        console.log("[AM4 Bot Log] Step 3: Route created! Triggering post-creation Autoprice...");
         autoPriceBtn.click();
 
         setTimeout(function() {
-            var targetY = document.getElementById('eTicket') || document.getElementById('eSeat') || document.getElementById('price_y');
-            var targetJ = document.getElementById('bTicket') || document.getElementById('bSeat') || document.getElementById('price_j');
-            var targetF = document.getElementById('fTicket') || document.getElementById('fSeat') || document.getElementById('price_f');
-
-            var targetL = document.getElementById('price_l');
-            var targetH = document.getElementById('price_h');
-
-            var isCargoRoute = !targetF && (targetL || targetH);
-            var truncateToTwoDecimals = function(num) { return Math.floor(num * 100) / 100; };
+            var targetY = document.getElementById('price_y') || document.getElementById('eTicket') || document.getElementById('eSeat');
+            var targetJ = document.getElementById('price_j') || document.getElementById('bTicket') || document.getElementById('bSeat');
+            var targetF = document.getElementById('price_f') || document.getElementById('fTicket') || document.getElementById('fSeat');
 
             var mY = parseFloat(localStorage.getItem('am4_cfg_mult_eco')) || 1.10;
             var mJ = parseFloat(localStorage.getItem('am4_cfg_mult_biz')) || 1.08;
             var mF = parseFloat(localStorage.getItem('am4_cfg_mult_first')) || 1.06;
-            var mCargoL = parseFloat(localStorage.getItem('am4_cfg_mult_cargo_l')) || 1.10;
-            var mCargoH = parseFloat(localStorage.getItem('am4_cfg_mult_cargo_h')) || 1.08;
 
-            if (isCargoRoute) {
-                var baseLarge = parseFloat(targetL ? targetL.value : (targetY ? targetY.value : 0)) || 0;
-                var baseHeavy = parseFloat(targetH ? targetH.value : (targetJ ? targetJ.value : 0)) || 0;
-
-                if (baseLarge > 0 && baseHeavy > 0) {
-                    var calcLarge = truncateToTwoDecimals(baseLarge * mCargoL);
-                    var calcHeavy = truncateToTwoDecimals(baseHeavy * mCargoH);
-
-                    var inputL = targetL || targetY;
-                    var inputH = targetH || targetJ;
-
-                    if (inputL) {
-                        inputL.value = calcLarge.toFixed(2);
-                        inputL.dispatchEvent(new Event('input', { bubbles: true }));
-                        inputL.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    if (inputH) {
-                        inputH.value = calcHeavy.toFixed(2);
-                        inputH.dispatchEvent(new Event('input', { bubbles: true }));
-                        inputH.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    console.log("[AM4 Bot Log] Step 4: Post-Creation Cargo Multipliers Applied -> Large: $" + calcLarge.toFixed(2) + " | Heavy: $" + calcHeavy.toFixed(2));
-                }
-            } else {
-                var baseY = parseFloat(targetY ? targetY.value : 0) || 0;
-                var baseJ = parseFloat(targetJ ? targetJ.value : 0) || 0;
-                var baseF = parseFloat(targetF ? targetF.value : 0) || 0;
-
-                if (baseY > 0 && baseJ > 0 && baseF > 0) {
-                    var calcY = Math.floor(baseY * mY);
-                    var calcJ = Math.floor(baseJ * mJ);
-                    var calcF = Math.floor(baseF * mF);
-
-                    if (targetY) {
-                        targetY.value = calcY.toString();
-                        targetY.dispatchEvent(new Event('input', { bubbles: true }));
-                        targetY.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    if (targetJ) {
-                        targetJ.value = calcJ.toString();
-                        targetJ.dispatchEvent(new Event('input', { bubbles: true }));
-                        targetJ.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    if (targetF) {
-                        targetF.value = calcF.toString();
-                        targetF.dispatchEvent(new Event('input', { bubbles: true }));
-                        targetF.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    console.log("[AM4 Bot Log] Step 4: Post-Creation Passenger Multipliers Applied -> Eco: $" + calcY + " | Biz: $" + calcJ + " | First: $" + calcF);
-                }
+            if (targetY && targetJ && targetF) {
+                targetY.value = Math.floor(parseFloat(targetY.value) * mY).toString();
+                targetJ.value = Math.floor(parseFloat(targetJ.value) * mJ).toString();
+                targetF.value = Math.floor(parseFloat(targetF.value) * mF).toString();
+                targetY.dispatchEvent(new Event('input', { bubbles: true }));
+                targetJ.dispatchEvent(new Event('input', { bubbles: true }));
+                targetF.dispatchEvent(new Event('input', { bubbles: true }));
             }
-        }, 300);
-
-        setTimeout(function() {
-            console.log("[AM4 Bot Log] Step 5: Post-creation pricing updates successfully finalized!");
-        }, 2500);
+        }, 350);
         return;
     }
 
-    if (isPricingWorkflowActive) return;
+    if (finalRouteConfirmBtn && !finalRouteConfirmBtn.classList.contains("bot-route-creation-submitted")) {
+        setTimeout(function() {
+            if (finalRouteConfirmBtn && !finalRouteConfirmBtn.classList.contains("bot-route-creation-submitted")) {
+                finalRouteConfirmBtn.classList.add("bot-route-creation-submitted");
+                finalRouteConfirmBtn.click();
+                setTimeout(function() {
+                    window.am4.isRouteSelected = false;
+                    window.am4.isPricingActive = false;
+                    window.am4.rejectedRoutes = [];
+                    var oldFormLock = document.querySelector(".bot-funnel-filled-lock");
+                    if (oldFormLock) oldFormLock.classList.remove("bot-funnel-filled-lock");
+                }, 1200);
+            }
+        }, 600);
+        return;
+    }
+
+    if (window.am4.isPricingActive) return;
 
     var researchTable = document.getElementById("list") || document.querySelector("#research_results_container") || document.querySelector(".research-results");
     if (!researchTable || (rDetailsPane && rDetailsPane.innerText && rDetailsPane.innerText.trim().length > 10) || finalRouteConfirmBtn || autoPriceBtn) return;
+    if (researchTable.innerText.trim().length < 10) return;
+
+    var sessionSavedMaxRange = sessionStorage.getItem("bot_active_aircraft_range") || window.am4.maxRange.toString();
+    var liveMaxDistInput = document.querySelector("#maxDist");
+    if (liveMaxDistInput && sessionSavedMaxRange && parseInt(sessionSavedMaxRange, 10) > 100) {
+        if (liveMaxDistInput.value.replace(/[^0-9]/g, "") !== sessionSavedMaxRange.replace(/[^0-9]/g, "")) return;
+    }
 
     var rows = researchTable.querySelectorAll(".row.border.sorter") || researchTable.querySelectorAll("tr") || researchTable.querySelectorAll(".modal-body .row");
     var bestRowToClick = null;
@@ -2002,42 +2226,37 @@ setInterval(function() {
 
     rows.forEach(function(row) {
         var rowLabelEl = row.querySelector(".exo") || row.querySelector("b") || row;
+        if (!rowLabelEl) return;
         var rowRouteString = rowLabelEl.innerText.replace("[⭐ HIGH YIELD]", "").trim();
-        if (rejectedRouteIds.includes(rowRouteString)) return;
+        if (window.am4.rejectedRoutes.indexOf(rowRouteString) !== -1) { row.style.display = "none"; return; }
 
         var ecoDemand = parseInt(row.getAttribute("data-yclass"), 10) || 0;
         var largeCargo = parseInt(row.getAttribute("data-large"), 10) || 0;
 
-        var isHighYieldPassenger = (ecoDemand > 1200);
-        var isHighYieldCargo = (largeCargo > 50000);
-
-        if (isHighYieldPassenger || isHighYieldCargo) {
+        if (ecoDemand > 1200 || largeCargo > 50000) {
             if (!row.classList.contains("bot-perfect-route-tagged")) {
                 row.classList.add("bot-perfect-route-tagged");
                 row.style.backgroundColor = "rgba(16, 185, 129, 0.22)";
                 row.style.border = "2px solid #10b981";
-                var label = row.querySelector(".exo") || row.querySelector("b") || row.querySelector("td");
-if (label && !label.innerHTML.includes("[⭐ HIGH YIELD]")) {
-    label.innerHTML = "[⭐ HIGH YIELD] " + label.innerHTML;
-}
-}
-var comparativeMetric = Math.max(ecoDemand, largeCargo);
-if (comparativeMetric > highestDemandFound) {
-    highestDemandFound = comparativeMetric;
-    bestRowToClick = row;
-}
-}
-});
-if (bestRowToClick && !hasAutoSelectedRouteThisOpen) {
-    hasAutoSelectedRouteThisOpen = true;
-    bestRowToClick.classList.add("bot-clicking-active");
-    console.log("[AM4 Bot Log] Testing best highlighted option path strategy variables...");
-    setTimeout(function() {
-        if (typeof humanClick === 'function') { humanClick(bestRowToClick); } else { bestRowToClick.click(); }
-    }, 400);
-}
-}, 1500);
+                if (rowLabelEl.innerHTML.indexOf("[⭐ HIGH YIELD]") === -1) {
+                    rowLabelEl.innerHTML = '<span style="color:#10b981; font-weight:bold;">[⭐ HIGH YIELD]</span> ' + rowLabelEl.innerHTML;
+                }
+            }
+            var comparativeMetric = Math.max(ecoDemand, largeCargo);
+            if (comparativeMetric > highestDemandFound) {
+                highestDemandFound = comparativeMetric;
+                bestRowToClick = row;
+            }
+        }
+    });
 
+    if (bestRowToClick && !window.am4.isRouteSelected) {
+        window.am4.isRouteSelected = true;
+        bestRowToClick.classList.add("bot-clicking-active");
+        console.log("[AM4 Bot Log] Selecting high-yield option path...");
+        setTimeout(function() { if (bestRowToClick) bestRowToClick.click(); }, 400);
+    }
+}, 1500);
 
 function scanMarketplaceForBestHubs() {
     var popupBox = document.getElementById('popup');
@@ -2066,63 +2285,53 @@ function scanMarketplaceForBestHubs() {
 }
 
 function runVisualHubHighlighter() {
-    // 1. ELITE COUNTRIES: Used ONLY to highlight the first country dropdown menu safely
+    // 1. ELITE COUNTRIES: Cleaned and prepared for fuzzy matching
     var eliteCountries = [
-        "South Korea", "Singapore", "Hong Kong", "India", "UAE", "Bahrain",
-        "Australia", "Fiji",
-        "United Kingdom", "United Kingdom (Heathrow)", "Netherlands", "Germany", "France",
-        "United States", "Brazil", "Chile", "Venezuela", "Argentina",
-        "Tunisia", "Angola", "Senegal"
+        "south korea", "singapore", "hong kong", "india", "uae", "bahrain",
+        "australia", "fiji", "united kingdom", "netherlands", "germany",
+        "france", "united states", "brazil", "chile", "venezuela",
+        "argentina", "tunisia", "angola", "senegal"
     ];
 
-    // 2. ELITE AIRPORTS: Extracted exactly from the ultimate continental guide list
+    // 2. ELITE AIRPORTS: Cleaned and prepared for fuzzy matching
     var highYieldAirports = [
-        // Asia
-        "Seoul Incheon",
-        "Singapore Changi",
-        "Hong Kong",
-        "New Delhi",
-        "Dubai International",
-        "Manama",
-
-        // Australia & Oceania
-        "Sydney intl",
-        "Canberra",
-        "Nadi",
-
-        // Europe
-        "London Heathrow",
-        "Amsterdam",
-        "Frankfurt intl",
-        "Paris Charles de Gaulle",
-
-        // North America
-       "New York John F. Kennedy",
-        "Dallas Fort-Worth",
-        "Chicago O'Hare",
-        "Los Angeles",
-
-        // South America
-        "Sao Paolo Guarulhos",
-        "Santiago de Chile",
-        "Caracas",
-        "Buenos Aires int",
-
-        // Africa
-        "Tunis",
-        "Luanda",
-        "Dakar L.S. Senghor"
+        "seoul incheon", "singapore changi", "hong kong", "new delhi", "dubai international", "manama",
+        "sydney intl", "canberra", "nadi",
+        "london heathrow", "amsterdam", "frankfurt intl", "paris charles de gaulle",
+        "new york john f. kennedy", "dallas fort-worth", "chicago o'hare", "los angeles",
+        "sao paolo guarulhos", "santiago de chile", "caracas", "buenos aires int",
+        "tunis", "luanda", "dakar l.s. senghor"
     ];
 
-    var generalElements = document.querySelectorAll("#popup option, #popup tr, .modal-body td");
+    var generalElements = document.querySelectorAll('#popup option, #popup tr, #popup td, .modal-body td, .modal-body tr');
     generalElements.forEach(function(el) {
-        var text = (el.innerText || el.textContent || "").trim();
-        var shouldPaint = eliteCountries.includes(text) || highYieldAirports.includes(text);
+        var text = (el.innerText || el.textContent || "").trim().toLowerCase();
+        if (!text) return;
 
-        if (el.tagName.toLowerCase() === 'td' || el.tagName.toLowerCase() === 'tr') {
-            if (eliteCountries.includes(text) && !highYieldAirports.includes(text)) {
-                shouldPaint = false;
+        var shouldPaint = false;
+
+        // Loop through and look for country matches
+        for (var i = 0; i < eliteCountries.length; i++) {
+            if (text.indexOf(eliteCountries[i]) !== -1) {
+                shouldPaint = true;
+                break;
             }
+        }
+        // Loop through and look for airport matches
+        for (var j = 0; j < highYieldAirports.length; j++) {
+            if (text.indexOf(highYieldAirports[j]) !== -1) {
+                shouldPaint = true;
+                break;
+            }
+        }
+
+        // Special rule filter: Prevents broad country names from mispainting row spaces
+        if (el.tagName.toLowerCase() === 'td' || el.tagName.toLowerCase() === 'tr') {
+            var isCountryOnly = false;
+            for (var c = 0; c < eliteCountries.length; c++) {
+                if (text === eliteCountries[c]) { isCountryOnly = true; break; }
+            }
+            if (isCountryOnly) { shouldPaint = false; }
         }
 
         if (shouldPaint && !el.classList.contains("bot-premium-hub-painted")) {
@@ -2138,11 +2347,11 @@ function runVisualHubHighlighter() {
     if (airportSelector) {
         var options = airportSelector.querySelectorAll("option");
         options.forEach(function(opt) {
-            var optText = opt.innerText || opt.textContent || "";
+            var optText = (opt.innerText || opt.textContent || "").toLowerCase();
             highYieldAirports.forEach(function(target) {
-                if (optText.includes(target) && !opt.classList.contains("bot-premium-airport-tagged")) {
+                if (optText.indexOf(target) !== -1 && !opt.classList.contains("bot-premium-airport-tagged")) {
                     opt.classList.add("bot-premium-airport-tagged");
-                    opt.innerText = "⭐ [BEST HUB] " + optText.toUpperCase();
+                    opt.innerText = "⭐ [BEST HUB] " + opt.innerText.toUpperCase();
                     opt.style.backgroundColor = "#5cb85c";
                     opt.style.color = "#ffffff";
                     opt.style.fontWeight = "bold";
@@ -2288,25 +2497,27 @@ if (thirtyMinCounterTicks === 1 || thirtyMinCounterTicks >= 180) {
     thirtyMinCounterTicks = 2;
     var netDifference = currentCash - lastMonitoredBalance;
     lastMonitoredBalance = currentCash;
-
-    if (netRevenueIntervalTicks.length === 0 && netDifference === 0) { netDifference = 150000; }
+    if (netRevenueIntervalTicks.length === 0 && netDifference === 0) {
+        netDifference = 150000;
+    }
     if (Math.abs(netDifference) < 500000000 && netDifference !== 0) {
         netRevenueIntervalTicks.push(netDifference);
-        if (netRevenueIntervalTicks.length > 10) { netRevenueIntervalTicks.shift(); }
+        if (netRevenueIntervalTicks.length > 10) {
+            netRevenueIntervalTicks.shift();
+        }
     }
 }
-
 var combinedSum = 0;
-netRevenueIntervalTicks.forEach(function(val) { combinedSum += val; });
+netRevenueIntervalTicks.forEach(function(val) {
+    combinedSum += val;
+});
 var averageThirtyMinRevenue = netRevenueIntervalTicks.length > 0 ? Math.floor(combinedSum / netRevenueIntervalTicks.length) : 150000;
 var flowPerDay = averageThirtyMinRevenue * 48;
-
 var displayRoi = "Infinite";
 if (flowPerDay > 0 && currentCash > 0) {
     var daysToPayback = currentCash / flowPerDay;
     displayRoi = daysToPayback.toFixed(1) + " Days";
 }
-
 var fField = document.getElementById('metricOverlayFlow');
 var rField = document.getElementById('metricOverlayROI');
 var fuelField = document.getElementById('metricOverlayFuelSpend');
@@ -2318,7 +2529,9 @@ if (fField) {
     fField.innerText = (flowPerDay >= 0 ? "+" : "") + flowPerDay.toLocaleString('en-US') + " /d";
     fField.style.color = flowPerDay >= 0 ? '#10b981' : '#ef4444';
 }
-if (rField) { rField.innerText = displayRoi; }
+if (rField) {
+    rField.innerText = displayRoi;
+}
 if (fuelField) {
     var fuelThreshold = parseInt(localStorage.getItem('am4_cfg_fuel_max'), 10) || 800;
     fuelField.innerText = "$" + Math.floor(fuelThreshold * 0.12 * 60 * 24).toLocaleString('en-US') + " /d";
@@ -2336,22 +2549,23 @@ if (allianceDayField) {
 }, 10000);
 
 //================================================================================
-// MASTER CORE LAUNCHPAD INITIALIZATION HANDSHAKE SEQUENCE
+// 5. MASTER CORE LAUNCHPAD INITIALIZATION HANDSHAKE SEQUENCE
 //================================================================================
-// Mount the UI Overlays onto the screen layout
 setTimeout(injectDashboardToggleControls, 2000);
 setTimeout(buildDashboardFinancialOverlay, 3000);
 setTimeout(setupClosePopProtection, 3500);
 
-// CRUCIAL ENGAGEMENT HOOKS: Wake up the automation background timers instantly
+// CORE AUTOMATION AND STRATEGY WATCHERS HOOKS
+setTimeout(scanMarketplaceForBestHubs, 4000);
 setTimeout(autoDepartRoutine, 4500);
 setTimeout(scanConsumable, 5000);
 setTimeout(run24hMarketingRoutine, 5500);
 setTimeout(autoRepairCheckLoop, 6000);
 setTimeout(autoCheckCheckLoop, 6500);
 
-// Start the real-time layout visual watchers
+// REAL-TIME COMPILER ENVIRONMENT SCANNERS
 setTimeout(routeDistanceWatcher, 7000);
 setTimeout(cargoDemandWatcher, 7500);
 setTimeout(paxDemandWatcher, 8000);
+
 })();
