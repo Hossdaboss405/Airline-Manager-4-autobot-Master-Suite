@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name AM4 MASTER SUITE MADE BY HOSS
 // @namespace http://tampermonkey.net/
-// @version 2.20
+// @version 2.26
 // @description AM4 automation suite: auto depart (departs the whole queue), buy/marketing/repair/check, price multipliers, best-hub highlighter, Research Explorer (ranks hubs by good routes for the selected aircraft type), one-click Auto-Build pipeline (order named+configured → modify CO2/speed/fuel → route, from the Explorer, fail-closed queue), Fleet Assistant (fleet state + manual capped buyer for any aircraft type + manual route builder), separate 🔧 Modify panel (seats + speed/fuel/CO2 upgrades, parked & routed aircraft), quiet hours (idle overnight), real 24h net income in the overlay, status dashboard with a persisted action log (departed/bought/built…), hard spend guards (never-spend-points + daily/per-cycle caps), settings panel (⚙) with per-campaign marketing, all suite windows draggable + collapsible (Explorer/Fleet/Modify/Build/Status/Settings/Financial, positions remembered), collapsible overlay and randomized timing
 // @author HOSS
 // @match *://airlinemanager.com/*
@@ -24,7 +24,7 @@
 (function() {
 'use strict';
 
-var AM4_SUITE_VERSION = '2.20';
+var AM4_SUITE_VERSION = '2.26';
 
 var am4NativeConsoleLog = (typeof console !== 'undefined' && console.log)
     ? console.log.bind(console) : function () {};
@@ -5258,6 +5258,26 @@ function am4AircraftSanitizeSeats(p) {
     return p;
 }
 
+function am4AircraftParseCapacityFromDom(box) {
+    if (!box || !box.querySelector) return 0;
+    var best = 0;
+    ['eSeat', 'bSeat', 'fSeat'].forEach(function (id) {
+        var el = box.querySelector('#' + id) || box.querySelector('[name="' + id + '"]');
+        if (!el) return;
+        var mx = parseInt(String(el.getAttribute('max') || el.getAttribute('data-max') || ''), 10);
+        if (mx > best) best = mx;
+    });
+    var text = String(box.innerText || box.textContent || '').replace(/\s+/g, ' ');
+    var totM = text.match(/(\d{2,4})\s*\/\s*(\d{2,4})\s*(?:seat|slot|pax)/i) ||
+        text.match(/(?:total|max(?:imum)?)\s*(?:seat|slot|pax|capacity)[^0-9]{0,20}(\d{2,4})/i) ||
+        text.match(/(?:seat|slot|pax|capacity)\s*(?:cap(?:acity)?)?[^0-9]{0,12}(\d{2,4})/i);
+    if (totM) {
+        var n = parseInt(String(totM[totM.length - 1] || totM[1]).replace(/[^0-9]/g, ''), 10);
+        if (n > best) best = n;
+    }
+    return (best >= 41 && best <= 1000) ? best : 0;
+}
+
 function am4AircraftParseCapacity(html, prevSeats, asCargo) {
     var raw = String(html || '');
     var prev = Math.max(0, parseInt(prevSeats, 10) || 0);
@@ -5269,12 +5289,26 @@ function am4AircraftParseCapacity(html, prevSeats, asCargo) {
             if (kg >= 1000 && kg <= 2000000) return kg;
         }
     }
+    var jsNames = ['maxSeats', 'totalSeats', 'acCapacity', 'defSeats', 'maxPax', 'seatMax', 'maxSeat', 'paxMax', 'capacityMax'];
+    var si, sm, sn, bestJs = 0;
+    for (si = 0; si < jsNames.length; si++) {
+        sm = new RegExp('(?:var\\s+)?' + jsNames[si] + '\\s*=\\s*(\\d+)', 'i').exec(raw);
+        if (!sm) continue;
+        sn = parseInt(sm[1], 10);
+        if (asCargo && sn >= 1000 && sn <= 2000000) return sn;
+        if (sn >= 10 && sn <= 1000 && sn > bestJs) bestJs = sn;
+    }
+    if (bestJs) return bestJs;
     var strong = raw.match(/maxSeats\s*=\s*(\d+)/i) || raw.match(/totalSeats\s*=\s*(\d+)/i);
     if (strong) {
-        var sn = parseInt(strong[1], 10);
+        sn = parseInt(strong[1], 10);
         if (asCargo && sn >= 1000 && sn <= 2000000) return sn;
         if (sn >= 10 && sn <= 1000) return sn;
     }
+    var box = document.createElement('div');
+    box.innerHTML = raw;
+    var domCap = am4AircraftParseCapacityFromDom(box);
+    if (domCap) return domCap;
     var weak = raw.match(/\bcapacity[^0-9]{0,24}([\d,]{2,7})\b/i) ||
         raw.match(/\b([\d,]{2,4})\s*PAX\b/i) ||
         raw.match(/\b([\d,]{2,4})\s*seats\b/i);
@@ -5594,13 +5628,7 @@ function am4AircraftRefreshCatalog() {
 // seats / range / cruise — not only for the type you clicked last.
 var am4AircraftPrefetchBusy = false;
 function am4AircraftProfileNeedsOrderPage(p) {
-    if (!p) return true;
-    if (!(p.seats > 0) && !p.cargo) return true;
-    if (p.cargo && !(p.cargoKg > 0)) return true;
-    if (!(p.rangeKm > 0)) return true;
-    if (!(p.cruiseStock > 0)) return true;
-    if (!p.cargo && p.seats <= 40 && p.rangeKm >= 3500) return true;
-    return false;
+    return am4AircraftProfileIncomplete(p);
 }
 function am4AircraftPrefetchOwnedProfiles() {
     if (am4AircraftPrefetchBusy) return;
@@ -5836,7 +5864,9 @@ function am4AircraftApplyOrderPage(html, typeId) {
     var maxM = (html || '').match(/maxAcOrder\s*=\s*(\d+)/);
     if (maxM) p.maxAcOrder = parseInt(maxM[1], 10);
     var parsedCap = am4AircraftParseCapacity(html, p.seats, false);
-    if (/maxSeats\s*=\s*\d+|totalSeats\s*=\s*\d+/i.test(html || '')) p.seatsFromMax = true;
+    var domCap = am4AircraftParseCapacityFromDom(box);
+    if (domCap > parsedCap) parsedCap = domCap;
+    if (/maxSeats\s*=\s*\d+|totalSeats\s*=\s*\d+/i.test(html || '') || domCap >= 41) p.seatsFromMax = true;
     if (parsedCap > 0 && parsedCap <= 1000) p.seats = parsedCap;
     am4AircraftSanitizeSeats(p);
     var specs = am4AircraftParseSpecs(html, box);
@@ -5930,6 +5960,22 @@ function am4AircraftSelectType(typeId, onDone) {
                 return am4AircraftProfile();
             }
             var p = am4AircraftApplyOrderPage(html, typeId);
+            if (!(am4AircraftSeats() > 0) && !am4AircraftIsCargo()) {
+                return am4AircraftFetchCapacityFallback(typeId).then(function (cap) {
+                    if (cap > 0 && am4AircraftTypeId() === typeId) {
+                        var prof = am4AircraftProfile();
+                        prof.seats = cap;
+                        prof.seatsFromMax = true;
+                        am4AircraftSanitizeSeats(prof);
+                        am4AircraftSet(prof);
+                        p = prof;
+                    }
+                    if (typeof am4StrategyRender === 'function') am4StrategyRender();
+                    if (typeof am4FleetFillEngineSelect === 'function') am4FleetFillEngineSelect();
+                    if (typeof onDone === 'function') onDone(p);
+                    return p;
+                });
+            }
             if (typeof am4StrategyRender === 'function') am4StrategyRender();
             if (typeof am4FleetFillEngineSelect === 'function') am4FleetFillEngineSelect();
             if (typeof onDone === 'function') onDone(p);
@@ -6069,12 +6115,53 @@ function am4StrategyBuildPanel() {
     if (typeof am4ExpBuildPanel === 'function') return am4ExpBuildPanel();
     return null;
 }
+function am4AircraftProfileIncomplete(p) {
+    p = p || am4AircraftProfile();
+    if (p === am4AircraftCurrent) am4AircraftSanitizeSeats(am4AircraftCurrent);
+    if (p.cargo) {
+        return !(p.cargoKg > 0) || !(p.rangeKm > 0) || !(p.cruiseStock > 0);
+    }
+    var seats = (p === am4AircraftCurrent) ? am4AircraftSeats() : Math.max(0, parseInt(p.seats, 10) || 0);
+    if (!(seats > 0)) return true;
+    if (seats <= 40 && (p.rangeKm || 0) >= 3500) return true;
+    if (seats >= 400 && p.typeId !== 2 && !p.cargo &&
+        !/\b(747|777|787-10|A350-1000|A380)\b/i.test(String(p.name || ''))) return true;
+    return !(p.rangeKm > 0) || !(p.cruiseStock > 0);
+}
+
+function am4AircraftCapacityLabel() {
+    if (am4AircraftIsCargo()) {
+        var kg = am4AircraftCargoKg() || 0;
+        return kg > 0
+            ? (kg.toLocaleString() + ' kg capacity · Large uses 0.7 / Heavy 1.0 · demand L=Y×500 H=J×1000')
+            : '<span style="color:#ef4444;">unread — pick the type again below</span>';
+    }
+    var s = am4AircraftSeats();
+    return s > 0
+        ? (s + ' seat slots (Y/J/F physical cap from the order page)')
+        : '<span style="color:#ef4444;">unread — pick the type again below (order stats loading…)</span>';
+}
+
+function am4AircraftFetchCapacityFallback(typeId) {
+    typeId = parseInt(typeId, 10) || am4AircraftTypeId();
+    var prof = am4AircraftLoadProfile(typeId) || {};
+    var eng = prof.engineId || am4AircraftEngineId() || 0;
+    var url = 'ac_orders.php?mode=detail&id=' + typeId + '&charter=0' + (eng ? ('&engine=' + eng) : '');
+    return fetch(url, { credentials: 'include' }).then(function (r) { return r.text(); }).then(function (html) {
+        var cap = am4AircraftParseCapacity(html, 0, false);
+        return cap > 0 ? cap : 0;
+    }).catch(function () { return 0; });
+}
+
 function am4StrategyRender() {
-    if (!am4AircraftProfile().cruiseStock && typeof am4AircraftSelectType === 'function') {
-        var tid = am4AircraftTypeId();
+    var tid = am4AircraftTypeId();
+    if (am4AircraftProfileIncomplete() && typeof am4AircraftSelectType === 'function') {
         if (am4StrategyRender._fetching !== tid) {
             am4StrategyRender._fetching = tid;
-            am4AircraftSelectType(tid, function () { am4StrategyRender(); });
+            am4AircraftSelectType(tid, function () {
+                am4StrategyRender._fetching = null;
+                am4StrategyRender();
+            });
         }
     }
     am4StratEnsurePossibleN();
@@ -6127,9 +6214,7 @@ function am4StrategyRender() {
     bBox.innerHTML ="<div style='color:#f59e0b; font-size:11px; font-weight:bold; border-top:1px dashed #334155; padding-top:6px; margin-bottom:4px;'>DISTANCE BANDS · " + am4FleetEsc(am4AircraftName()) +"</div>" + rows + maxNote +
         "<div style='margin-top:8px; padding:8px; background:#0e1b14; border:1px solid #10b981; border-radius:6px; color:#d1fae5; line-height:1.6;'>" +
         "<b>Selected: " + cfg.n +" flights / 24 h</b><br>Build routes with a distance of <b>" + Number(cur.lo).toLocaleString() +" &ndash; " + Number(cur.hi).toLocaleString() +" km</b>." +
-        "<br>Capacity for Explorer fill: <b>" + (am4AircraftIsCargo()
-            ? ((am4AircraftCargoKg() || 0).toLocaleString() +" capacity · Large uses 0.7 / Heavy 1.0 · demand L=Y×500 H=J×1000")
-            : (am4AircraftSeats() +" seats (Y/J/F splits use this)")) +".</b>" +
+        "<br>Capacity for Explorer fill: <b>" + am4AircraftCapacityLabel() + ".</b>" +
         "<br>Demand per flight = demand &divide; " + cfg.n +" &middot; $/day = revenue &times; " + cfg.n +" &middot; cruise " + am4StratKphLabel(am4StratCruiseKph(cfg)) +" &rarr; real " + (cur.realSpeed ? Math.round(cur.realSpeed).toLocaleString() +" kph" :"unknown") +".</div>" ;
 }
 
@@ -6139,6 +6224,7 @@ window.AM4Strategy = { loadCfg: am4StratLoadCfg, saveCfg: am4StratSaveCfg, band:
 var AM4_EXP_CFG_KEY = 'am4ExplorerCfg';
 var AM4_EXP_CACHE_KEY = 'am4ExplorerCache';
 var AM4_EXP_META_KEY = 'am4ExplorerMeta'; // owned hubs + country list, cached
+var AM4_EXP_META_V = 2; // v2: country names from option text, not numeric values
 
 var AM4_EXP_DEFAULT_CFG = {
     // Default is economy-first: the user's real A380 configs are all economy-dominant with
@@ -6708,7 +6794,10 @@ var AM4_EXP_META_TTL_MS = 6 * 60 * 60 * 1000;
 function am4ExpMetaCached() {
     try {
         var c = JSON.parse(localStorage.getItem(AM4_EXP_META_KEY) || 'null');
-        if (c && c.hubs && c.hubs.length && c.countries && c.countries.length) return c;
+        if (c && c.v === AM4_EXP_META_V && c.hubs && c.hubs.length && c.countries && c.countries.length) {
+            if (/^\d+$/.test(String(c.countries[0] || ''))) return null;
+            return c;
+        }
     } catch (e) { /* unreadable - treat as absent */ }
     return null;
 }
@@ -6717,6 +6806,17 @@ function am4ExpMetaAgeMs() {
     if (!c || !c.at) return null;
     var t = Date.parse(c.at);
     return isFinite(t) ? (Date.now() - t) : null;
+}
+
+// research_main search uses the visible country NAME in arr=, not a numeric option value.
+function am4ExpCountryFromOption(o) {
+    if (!o) return '';
+    var val = (o.value || '').trim();
+    var text = (o.textContent || '').trim();
+    if (/^-\s*select/i.test(val) || /^-\s*select/i.test(text)) return '';
+    if (text.length > 1 && !/^\d+$/.test(text)) return text;
+    if (val.length > 1 && !/^\d+$/.test(val)) return val;
+    return '';
 }
 
 function am4ExpFetchMeta(force) {
@@ -6745,8 +6845,8 @@ function am4ExpFetchMeta(force) {
                 var countries = [];
                 if (countrySel) {
                     Array.prototype.forEach.call(countrySel.querySelectorAll('option'), function (o) {
-                        var v = (o.value || '').trim();
-                        if (v && !/^-\s*select/i.test(v)) { countries.push(v); }
+                        var c = am4ExpCountryFromOption(o);
+                        if (c) countries.push(c);
                     });
                 }
                 // A logged-out page, an error page or a half-rendered response all answer 200
@@ -6757,7 +6857,7 @@ function am4ExpFetchMeta(force) {
                     console.log('[AM4 Bot Log] Explorer: the research page returned no hub list - keeping the previous one.');
                     return resolve(cached);
                 }
-                var meta = { hubs: hubs, countries: countries, at: (new Date()).toISOString() };
+                var meta = { v: AM4_EXP_META_V, hubs: hubs, countries: countries, at: (new Date()).toISOString() };
                 try { localStorage.setItem(AM4_EXP_META_KEY, JSON.stringify(meta)); } catch (e) { /* ignore */ }
                 // The Rebuild module decides which end of a route is home from this hub list, so
                 // its derived classification has to be recomputed against the new one.
@@ -6797,8 +6897,9 @@ function am4ExpScanOneHub(hub, countries, flownMap, cfg, runID, onCountry) {
                 .then(function (h) { rows = rows.concat(am4ExpParseRows(h)); })
                 .catch(function () { /* skip this country */ })
                 .then(function () {
+                    var doneCountry = countries[i];
                     i++;
-                    if (typeof onCountry === 'function') onCountry(i, countries.length, hub);
+                    if (typeof onCountry === 'function') onCountry(i, countries.length, doneCountry, hub);
                     setTimeout(next, cfg.throttleMs);
                 });
         })();
@@ -7063,7 +7164,10 @@ function am4ExpBuildPanel() {
     if (stratType && !stratType.getAttribute('data-am4-bound')) {
         stratType.setAttribute('data-am4-bound','1');
         stratType.addEventListener('change', function () {
-            am4AircraftSelectType(this.value, function () { am4StrategyRender(); });
+            am4AircraftSelectType(this.value, function () {
+                am4StrategyRender();
+                if (typeof am4RbOnAircraftTypeChanged === 'function') am4RbOnAircraftTypeChanged();
+            });
         });
     }
     if (typeof am4StrategyRender === 'function') am4StrategyRender();
@@ -7269,9 +7373,12 @@ function am4ExpStartScan() {
     am4ExpScan(hubs, cfg, !!(useCache && useCache.checked), {
         onBusy: function () { am4ExpSetProg('A scan is already running.'); },
         onHubStart: function (hub, i, n) { am4ExpSetProg('Hub ' + (i + 1) + '/' + n + ': ' + hub.name + ' …'); },
-        onCountry: function (i, n, hub) {
+        onCountry: function (i, n, country, hub) {
             var within = (i / n) / totalHubs;
-            am4ExpSetProg('Hub ' + (doneHubs + 1) + '/' + totalHubs + ': ' + hub.name + ' · country ' + i + '/' + n, (doneHubs / totalHubs + within) * 100);
+            var hubName = (hub && hub.name) ? hub.name : '';
+            am4ExpSetProg('Hub ' + (doneHubs + 1) + '/' + totalHubs + ': ' + hubName +
+                ' · country ' + i + '/' + n + (country ? (' (' + country + ')') : ''),
+                (doneHubs / totalHubs + within) * 100);
         },
         onHubDone: function (res, i, n, fromCache) {
             doneHubs++;
@@ -7832,7 +7939,7 @@ function am4FleetBuildPanel() {
         "<div class='am4-fleet-sec' style='color:#f59e0b; font-size:11px; font-weight:bold; letter-spacing:0.5px; border-top:1px dashed #334155; padding-top:6px; margin-top:8px;'>BUILD ROUTE · assign an aircraft at base</div>" +
         "<div style='font-size:10px; color:#f87171; margin:5px 0; line-height:1.4;'>⚠ Spends a small route fee (~$1.5M). Uses the plane's OWN seat config (all 3 classes must be &gt; 0). Every aircraft the game lists as Parked or Grounded is offered, any model. Pick one, press Check route, then Create.</div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Aircraft at base</label><select id='am4RtePlane' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'><option>loading…</option></select></div>" +
-        "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Destination</label><select id='am4RteDest' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'><option value='>pick a researched route</option></select></div>" +
+        "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Destination</label><select id='am4RteDest' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'><option value=''>pick a researched route</option></select></div>" +
         "<div id='am4RteDestNote' style='font-size:9px; color:#64748b; margin:0 0 4px 0; line-height:1.4;'></div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Route name</label><input id='am4RteReg' maxlength='10' style='width:150px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'></div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Cost index (0-200)</label><input type='number' id='am4RteCi' value='200' min='0' max='200' style='width:70px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace;'></div>" +
@@ -7856,6 +7963,7 @@ function am4FleetBuildPanel() {
             am4AircraftSelectType(this.value, function () {
                 am4FleetReloadOrderAndLists();
                 am4StrategyRender();
+                if (typeof am4RbOnAircraftTypeChanged === 'function') am4RbOnAircraftTypeChanged();
             });
         });
     }
@@ -7896,7 +8004,7 @@ function am4FleetFillEngineSelect() {
     var p = am4AircraftProfile();
     var engines = (p.engines && p.engines.length) ? p.engines : [];
     if (!engines.length) {
-        sel.innerHTML ="<option value='>loading engines…</option>" ;
+        sel.innerHTML ="<option value=''>loading engines…</option>" ;
         return;
     }
     sel.innerHTML = engines.map(function (e) {
@@ -7914,7 +8022,7 @@ function am4FleetReloadOrderAndLists() {
         am4FleetOrderInfo = info;
         var sel = document.getElementById('am4FleetHub');
         if (sel) {
-            if (!info.hubs.length) { sel.innerHTML ="<option value='>could not read hubs</option>" ; }
+            if (!info.hubs.length) { sel.innerHTML ="<option value=''>could not read hubs</option>" ; }
             else sel.innerHTML = info.hubs.map(function (h) { return"<option value='" + am4FleetEsc(h.v) +"'>" + am4FleetEsc(h.t) +"</option>" ; }).join('');
         }
         var qty = document.getElementById('am4FleetQty');
@@ -9136,22 +9244,22 @@ function am4FleetResetCreateBtn() {
 function am4FleetRenderParkedPicker() {
     var sel = document.getElementById('am4RtePlane');
     if (!sel) return;
-    sel.innerHTML ="<option value='>reading parked aircraft…</option>" ;
+    sel.innerHTML ="<option value=''>reading parked aircraft…</option>" ;
     am4FleetListRouteCandidates(true, function (partial, tally) {
         if (!partial.length) {
-            sel.innerHTML ="<option value='>" + am4FleetEsc('checking landed at home — ' + tally) +"</option>" ;
+            sel.innerHTML ="<option value=''>" + am4FleetEsc('checking landed at home — ' + tally) +"</option>" ;
             return;
         }
         sel.innerHTML = partial.map(am4FleetRouteOptionHtml).join('');
         am4FleetOnPlaneSelect();
     }).then(function (list) {
         if (!list.length) {
-            sel.innerHTML ="<option value='>" + am4FleetEsc('no aircraft at base — ' + am4FleetParkedTally) +"</option>" ;
+            sel.innerHTML ="<option value=''>" + am4FleetEsc('no aircraft at base — ' + am4FleetParkedTally) +"</option>" ;
             return;
         }
         sel.innerHTML = list.map(am4FleetRouteOptionHtml).join('');
         am4FleetOnPlaneSelect();
-    }).catch(function () { sel.innerHTML ="<option value='>could not read fleet</option>" ; });
+    }).catch(function () { sel.innerHTML ="<option value=''>could not read fleet</option>" ; });
 }
 
 var am4FleetPlaneHubCache = {};
@@ -9201,12 +9309,12 @@ function am4FleetFillDestSelect(hub, preferArrId) {
     var prefer = preferArrId ? String(preferArrId) : '';
     var preferOk = false;
     if (!hubId) {
-        sel.innerHTML ="<option value='>scan this hub in Explorer</option>" ;
+        sel.innerHTML ="<option value=''>scan this hub in Explorer</option>" ;
         am4FleetSetDestNote('Home hub is unknown — scan it in Explorer first.','#f59e0b');
         return [];
     }
     if (!dests.length) {
-        sel.innerHTML ="<option value='>scan this hub in Explorer</option>" ;
+        sel.innerHTML ="<option value=''>scan this hub in Explorer</option>" ;
         var n = (typeof am4StratLoadCfg === 'function' ? am4StratLoadCfg().n : 2);
         var band = (typeof am4StratBand === 'function') ? am4StratBand(n, am4StratLoadCfg()) : null;
         var bandTxt = (band && band.possible)
@@ -9216,7 +9324,7 @@ function am4FleetFillDestSelect(hub, preferArrId) {
             ' (' + bandTxt + '). Scan this hub in Explorer at the current strategy — a previous N\'s cache is not reused.','#f59e0b');
         return [];
     }
-    sel.innerHTML ="<option value='>pick a researched route</option>" + dests.map(function (g) {
+    sel.innerHTML ="<option value=''>pick a researched route</option>" + dests.map(function (g) {
         if (prefer && String(g.arrId) === prefer) preferOk = true;
         return"<option value='" + am4FleetEsc(String(g.arrId)) +"'" +
             (prefer && String(g.arrId) === prefer ? " selected" : "") +">" +
@@ -9283,11 +9391,11 @@ function am4FleetOnPlaneSelect() {
     am4FleetSetRouteMsg('','#38bdf8');
     am4FleetResetCreateBtn();
     if (!p) {
-        if (dest) dest.innerHTML ="<option value='>pick an aircraft first</option>" ;
+        if (dest) dest.innerHTML ="<option value=''>pick an aircraft first</option>" ;
         am4FleetSetDestNote('','#64748b');
         return;
     }
-    if (dest) dest.innerHTML ="<option value='>reading home hub…</option>" ;
+    if (dest) dest.innerHTML ="<option value=''>reading home hub…</option>" ;
     am4FleetSetDestNote('Reading this plane\'s home hub…','#94a3b8');
     var wantPlane = p.planeId;
     am4FleetResolvePlaneHub(p).then(function (hub) {
@@ -12670,10 +12778,10 @@ function am4FleetSelectedModPlane() {
 function am4FleetRenderModPicker() {
     var sel = document.getElementById('am4ModPlane');
     if (!sel) return;
-    sel.innerHTML ="<option value='>reading aircraft…</option>" ;
+    sel.innerHTML ="<option value=''>reading aircraft…</option>" ;
     am4FleetListModifyA380().then(function (list) {
         if (!list.length) {
-            sel.innerHTML ="<option value='>" + am4FleetEsc('no aircraft — ' + am4FleetModTally) +"</option>" ;
+            sel.innerHTML ="<option value=''>" + am4FleetEsc('no aircraft — ' + am4FleetModTally) +"</option>" ;
             return;
         }
         // At base first (the routing-prep case), then routed; then by reg for stable scanning.
@@ -12687,7 +12795,7 @@ function am4FleetRenderModPicker() {
         }).join('');
         am4FleetOnModPlaneSelect();
         am4FleetModScanStart(list.map(function (p) { return p.planeId; }));
-    }).catch(function () { sel.innerHTML ="<option value='>could not read fleet</option>" ; });
+    }).catch(function () { sel.innerHTML ="<option value=''>could not read fleet</option>" ; });
 }
 
 // On plane select: read the game's modify panel, pre-fill the seat inputs with the plane's
@@ -13888,6 +13996,9 @@ var AM4_RB_CACHE_V = 1;
 var AM4_RB_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 var AM4_RB_CACHE_MAX_ENTRIES = 20;
 var AM4_RB_SEARCH_ROW_CAP = 50; // the game's per-request row limit (measured)
+// Rebuild scores with a lower fill bar than Explorer's default 99%. At high N (e.g. 8×/24h)
+// demand÷N is thin on a ~230-seat MC-21 — 99% fill rejects every route even when the band is fine.
+var AM4_RB_GOOD_FILL_PCT = 85;
 // Union of all strategy bands: nothing outside this can ever serve any strategy, so it is
 // pruned on write. (Strategy 4 floor .. A380 range.)
 var AM4_RB_ROW_MIN_KM = 8309;
@@ -14397,6 +14508,55 @@ function am4RbStrategyCounts(force) {
 // Raw per-hub sweep for ONE target strategy, cache-first. Returns decoded rows plus which
 // countries hit the game's 50-row cap (so the caller can report a floor, not a total).
 var am4RbScanRunID = 0;
+function am4RbEnsureAircraftStats() {
+    if (!am4AircraftProfileIncomplete()) return Promise.resolve(am4AircraftProfile());
+    if (typeof am4AircraftSelectType !== 'function') return Promise.resolve(am4AircraftProfile());
+    am4RbAnalyseMsg('reading ' + am4AircraftName() + ' order stats…', '#38bdf8');
+    return am4AircraftSelectType(am4AircraftTypeId());
+}
+
+function am4RbBuildScoreCfg(toN) {
+    var band = am4RbBand(toN);
+    if (!band.possible) return null;
+    am4AircraftSanitizeSeats(am4AircraftCurrent);
+    var prof = am4AircraftProfile();
+    var expCfg = am4ExpLoadCfg();
+    var seats = am4AircraftSeats();
+    var minRwy = (prof.minRwy > 0) ? prof.minRwy : expCfg.minRwy;
+    return {
+        seatStrategy: expCfg.seatStrategy,
+        cargoStrategy: expCfg.cargoStrategy,
+        throttleMs: expCfg.throttleMs,
+        flightsPerDay: toN,
+        cruiseKph: am4StratCruiseKph({ n: toN, modded: true }),
+        realSpeed: band.realSpeed,
+        bandLo: band.lo,
+        bandHi: band.hi,
+        minKm: band.lo,
+        rangeKm: band.hi,
+        distCap: band.hi,
+        seats: seats,
+        cargo: am4AircraftIsCargo(),
+        cargoKg: am4AircraftIsCargo() ? am4AircraftCargoKg() : 0,
+        cargoSplit: am4AircraftCargoSplit(),
+        typeId: am4AircraftTypeId(),
+        minRwy: minRwy,
+        goodFillPct: Math.min(expCfg.goodFillPct, AM4_RB_GOOD_FILL_PCT)
+    };
+}
+
+function am4RbFormatScoreStats(stats) {
+    if (!stats) return '';
+    var parts = [];
+    if (stats.rows) parts.push(stats.rows + ' raw');
+    if (stats.inBand) parts.push(stats.inBand + ' in band');
+    if (stats.fillFail) parts.push(stats.fillFail + ' low fill');
+    if (stats.rwyFail) parts.push(stats.rwyFail + ' runway');
+    if (stats.distFail) parts.push(stats.distFail + ' distance');
+    if (stats.zeroRev) parts.push(stats.zeroRev + ' no rev');
+    return parts.join(' · ');
+}
+
 function am4RbScanHubRaw(hubId, toN, opts, onProgress) {
     opts = opts || {};
     var band = am4RbBand(toN);
@@ -14406,6 +14566,7 @@ function am4RbScanHubRaw(hubId, toN, opts, onProgress) {
         if (hit) return Promise.resolve({ rows: hit.rows, capped: hit.capped, fromCache: true, at: hit.at, distCap: distCap });
     }
     var cfg = am4ExpLoadCfg();
+    var minRwy = (am4AircraftProfile().minRwy > 0) ? am4AircraftProfile().minRwy : cfg.minRwy;
     var runID = ++am4RbScanRunID;
     return am4ExpFetchMeta(false).then(function (meta) {
         var countries = (meta.countries && meta.countries.length) ? meta.countries : [];
@@ -14420,7 +14581,7 @@ function am4RbScanHubRaw(hubId, toN, opts, onProgress) {
                     return;
                 }
                 var country = countries[i];
-                var url = 'research_main.php?mode=search&rwy=' + cfg.minRwy + '&dist=' + distCap +
+                var url = 'research_main.php?mode=search&rwy=' + minRwy + '&dist=' + distCap +
                           '&depId=' + encodeURIComponent(hubId) + '&arr=' + encodeURIComponent(country) +
                           '&arrId=0&charter=0&_=' + Date.now();
                 fetch(url, { credentials: 'include'})
@@ -14443,22 +14604,13 @@ function am4RbScanHubRaw(hubId, toN, opts, onProgress) {
 }
 function am4RbCancelScan() { am4RbScanRunID++; }
 
-// Score raw rows for the TARGET strategy using the EXISTING verified Explorer model (demand÷N,
-// economy-first cascade into 600 slots, must FILL, ★ = longest third of the band). No re-tuning:
-// the 2026-08-13 strategy decision stands. bandLo+1 converts the Explorer's inclusive filter
-// into the half-open membership the classifier uses.
+// Score raw rows for the TARGET strategy. Uses this type's real seats/runway (not stale A380
+// Explorer defaults) and a rebuild fill cap (85%) so high-N bands still find candidates.
 function am4RbScoreDests(rows, hubId, toN, flownMap) {
-    var band = am4RbBand(toN);
-    if (!band.possible) return { good: [], goodCount: 0, built: 0, remaining: 0 };
-    var cfg = am4ExpLoadCfg();
-    cfg.flightsPerDay = toN;
-    cfg.cruiseKph = am4StratCruiseKph({ n: toN, modded: true });
-    cfg.realSpeed = band.realSpeed;
-    cfg.bandLo = band.lo + 1;
-    cfg.bandHi = band.hi;
-    cfg.minKm = band.lo + 1;
-    cfg.rangeKm = band.hi;
-    cfg.distCap = band.hi;
+    var cfg = am4RbBuildScoreCfg(toN);
+    if (!cfg || !(cfg.seats > 0)) {
+        return { good: [], goodCount: 0, built: 0, remaining: 0, stats: { zeroRev: (rows || []).length }, cfg: cfg };
+    }
     var fm = flownMap || am4ExpBuildFlownMap();
     var flownSet = (fm.map && fm.map[hubId]) || {};
     var countSet = (fm.counts && fm.counts[hubId]) || {};
@@ -14469,6 +14621,7 @@ function am4RbScoreDests(rows, hubId, toN, flownMap) {
                (Number(!!a.built) - Number(!!b.built)) ||
                (b.km - a.km);
     });
+    scored.cfg = cfg;
     return scored;
 }
 
@@ -14477,41 +14630,31 @@ function am4RbScoreDests(rows, hubId, toN, flownMap) {
 // route creation silently no-ops unless e>0 && b>0 && f>0.
 function am4RbTargetSeats(demand, toN) {
     var n = toN || 3;
-    var caps = { y: Math.floor((demand.y || 0) / n), j: Math.floor((demand.j || 0) / n), f: Math.floor((demand.f || 0) / n) };
-    var W = { y: 1, j: 2, f: 3 }, slots = am4AircraftSeats(), s = { y: 0, j: 0, f: 0 };
-    ['y','j','f' ].forEach(function (c) {
-        var t = Math.min(caps[c], Math.floor(slots / W[c]));
-        if (t < 0) t = 0;
-        s[c] = t; slots -= t * W[c];
-    });
-    var keys = ['y','j','f' ], changed = true;
-    while (slots > 0 && changed) {
-        changed = false;
-        for (var k = 0; k < keys.length; k++) {
-            var c = keys[k];
-            if (s[c] < caps[c] && W[c] <= slots) { s[c]++; slots -= W[c]; changed = true; break; }
-        }
+    var caps = {
+        y: Math.floor((demand.y || 0) / n),
+        j: Math.floor((demand.j || 0) / n),
+        f: Math.floor((demand.f || 0) / n)
+    };
+    var cap = am4AircraftSeats();
+    var expCfg = (typeof am4ExpLoadCfg === 'function') ? am4ExpLoadCfg() : {};
+    var topOrder = (expCfg.seatStrategy === 'economy-first') ? ['y', 'j', 'f'] : ['f', 'j', 'y'];
+    var norm = am4PaxSeatNormalize(caps.y, caps.j, caps.f, cap, topOrder);
+    if (norm.y + norm.j + norm.f < 3) {
+        norm = am4PaxSeatNormalize(
+            Math.max(1, caps.y), Math.max(1, caps.j), Math.max(1, caps.f), cap, topOrder);
     }
-    if (s.y < 1) s.y = 1;
-    if (s.j < 1) s.j = 1;
-    if (s.f < 1) s.f = 1;
-    while (s.y + 2 * s.j + 3 * s.f > am4AircraftSeats() && s.y > 1) s.y--;
-    return s;
+    return { y: norm.y, j: norm.j, f: norm.f };
 }
 
-// Destinations that must not be handed out again for this hub: already flown from it, or claimed
-// by a queued rebuild job, or claimed by a queued Auto-Build job (the two modules must not fight
-// over the same route). Returns a set of arrIds.
+// Destinations claimed by an in-flight rebuild or auto-build job for this hub. Existing
+// routes are NOT reserved — AM4 allows multiple aircraft on the same hub→destination pair,
+// and a rebuild often moves planes onto destinations that already have other aircraft on S8.
 function am4RbReservedDests(hubId, hubIcao) {
     var taken = {};
     try {
-        var fm = am4ExpBuildFlownMap();
-        var flown = (fm.map && fm.map[hubId]) || {};
-        Object.keys(flown).forEach(function (id) { taken[String(id)] = 'already flown from this hub'; });
-    } catch (e) { /* map unavailable - fall through, the route step still re-checks */ }
-    try {
         (am4RbQueue || []).forEach(function (j) {
-            if (j && j.newDestId && AM4_RB_ACTIVE.indexOf(j.state) !== -1) taken[String(j.newDestId)] = 'queued for ' + j.reg;
+            if (!j || !j.newDestId || String(j.hubId) !== String(hubId)) return;
+            if (AM4_RB_ACTIVE.indexOf(j.state) !== -1) taken[String(j.newDestId)] = 'queued for ' + j.reg;
         });
     } catch (e) { /* queue not loaded yet */ }
     try {
@@ -14526,22 +14669,54 @@ function am4RbReservedDests(hubId, hubIcao) {
     return taken;
 }
 
-// Pair aircraft to destinations: best destination to the first aircraft, and so on, skipping any
-// destination that is reserved. Aircraft with no destination left are reported explicitly rather
-// than silently dropped - they simply keep their current strategy.
+// Pair aircraft to destinations. Prefers unbuilt routes (spread onto fresh pairs) but allows
+// built ones when needed — unlike Auto-Build, rebuild is allowed to stack aircraft on an
+// existing hub→destination. Skips each plane's current destination (no-op rebuild).
 function am4RbPair(planes, dests, hubId, hubIcao, toN) {
-    var taken = am4RbReservedDests(hubId, hubIcao);
-    var pairs = [], unpaired = [], di = 0;
-    planes.forEach(function (p) {
-        var chosen = null;
-        while (di < dests.length) {
-            var d = dests[di++];
-            if (taken[String(d.arrId)]) continue;
-            taken[String(d.arrId)] = 'paired with ' + p.reg;
-            chosen = d;
-            break;
+    var reserved = am4RbReservedDests(hubId, hubIcao);
+    var pool = dests.filter(function (d) { return !reserved[String(d.arrId)]; });
+    var unbuilt = pool.filter(function (d) { return !d.built; });
+    var built = pool.filter(function (d) { return !!d.built; });
+    var pairs = [], unpaired = [];
+    var ui = 0, bi = 0;
+
+    function pickForPlane(plane) {
+        var cur = plane.curDestId ? String(plane.curDestId) : '';
+        var i, d;
+        for (i = ui; i < unbuilt.length; i++) {
+            d = unbuilt[i];
+            if (String(d.arrId) === cur) continue;
+            ui = i + 1;
+            return d;
         }
-        if (!chosen) { unpaired.push({ plane: p, why: 'no free destination left in the Strategy ' + toN + ' band'}); return; }
+        for (i = 0; i < unbuilt.length; i++) {
+            d = unbuilt[i];
+            if (String(d.arrId) === cur) continue;
+            return d;
+        }
+        for (i = bi; i < built.length; i++) {
+            d = built[i];
+            if (String(d.arrId) === cur) continue;
+            bi = i + 1;
+            return d;
+        }
+        for (i = 0; i < built.length; i++) {
+            d = built[i];
+            if (String(d.arrId) === cur) continue;
+            return d;
+        }
+        return null;
+    }
+
+    planes.forEach(function (p) {
+        var chosen = pickForPlane(p);
+        if (!chosen) {
+            var why = pool.length
+                ? ('no Strategy ' + toN + ' destination left (queue holds ' + Object.keys(reserved).length + ')')
+                : ('no fillable Strategy ' + toN + ' destinations from this hub');
+            unpaired.push({ plane: p, why: why });
+            return;
+        }
         var air = (typeof am4FleetResolveAirport === 'function') ? am4FleetResolveAirport(String(chosen.arrId)) : null;
         var icao = air ? (air.icao || air.iata || String(chosen.arrId)) : String(chosen.arrId);
         pairs.push({
@@ -14550,7 +14725,7 @@ function am4RbPair(planes, dests, hubId, hubIcao, toN) {
             fromStrategy: p.strategy, toStrategy: toN
         });
     });
-    return { pairs: pairs, unpaired: unpaired, reservedCount: Object.keys(taken).length };
+    return { pairs: pairs, unpaired: unpaired, reservedCount: Object.keys(reserved).length, poolCount: pool.length };
 }
 
 // A route/aircraft name that is not already in use. Aircraft registrations must be UNIQUE
@@ -15713,12 +15888,35 @@ function am4RbFillNSelects() {
     am4RbSilentSelect = false;
 }
 
+function am4RbOnAircraftTypeChanged() {
+    am4RbFleetCache = null;
+    am4RbFleetSource = 'snapshot';
+    am4RbSel.plan = null;
+    am4RbSel.hubList = [];
+    am4RbSel.hubs = {};
+    am4RbSel.forceHubs = {};
+    am4RbSel.userPicked = false;
+    var rv = document.getElementById('am4RbReview');
+    if (rv) rv.innerHTML = '';
+    am4RbAnalyseMsg('');
+    var panel = document.getElementById('am4RbPanel');
+    if (panel && panel.style.display === 'block') {
+        am4RbRefreshStrategyInfo();
+    }
+}
+
 function am4RbAlignSelToFleet(counts) {
     if (typeof am4StratEnsurePossibleN === 'function') am4StratEnsurePossibleN();
     var tid = (typeof am4AircraftTypeId === 'function') ? am4AircraftTypeId() : 0;
     if (am4RbSel.typeId !== tid) {
         am4RbSel.typeId = tid;
         am4RbSel.userPicked = false;
+        am4RbSel.plan = null;
+        am4RbSel.hubList = [];
+        am4RbSel.hubs = {};
+        am4RbSel.forceHubs = {};
+        am4RbFleetCache = null;
+        am4RbFleetSource = 'snapshot';
     }
     var longest = (typeof am4StratLongestN === 'function') ? am4StratLongestN() : 2;
     var wantTo = longest;
@@ -15747,6 +15945,7 @@ function am4RbRefreshStrategyInfo() {
     if (!el) return;
     am4RbStrategyCounts(false).then(function (c) {
         var prevFrom = am4RbSel.from;
+        var prevType = am4RbSel.typeId;
         am4RbAlignSelToFleet(c);
         am4RbFillNSelects();
         var warn = (am4RbSel.from === am4RbSel.to)
@@ -15756,6 +15955,9 @@ function am4RbRefreshStrategyInfo() {
             warn +="<div style='color:#ef4444;'>Strategy " + am4RbSel.to +" is beyond this type's range. Pick the max-range N as To.</div>" ;
         }
         el.innerHTML =
+            "<div style='color:#64748b; margin-bottom:4px;'>Aircraft: <b style='color:#e2e8f0;'>" +
+            am4RbEsc((typeof am4AircraftName === 'function') ? am4AircraftName() : 'unknown') +
+            "</b> — change in 🔎 Explorer, then ⟳ here.</div>" +
             "<div>" + am4RbEsc(am4RbBandText(am4RbSel.from)) +" — <b style='color:#e2e8f0;'>" + (c[am4RbSel.from] || 0) +" aircraft</b> on this strategy now</div>" +
             "<div>" + am4RbEsc(am4RbBandText(am4RbSel.to)) +" — target</div>" +
             "<div style='color:#64748b;'>Fleet: " + (function () {
@@ -15771,9 +15973,10 @@ function am4RbRefreshStrategyInfo() {
             (c.bothEndsAreHubs ? ("<div style='color:#64748b;'>" + c.bothEndsAreHubs +
                 " aircraft fly between two of your own hubs; home is taken from the route's own direction.</div>") : "") +
             am4RbFleetProvenance() +
-            "<div style='color:#64748b;'>The +10% Speed modification is required for these distance bands and will be installed during the rebuild.</div>" +
+            "<div style='color:#64748b;'>Rebuild fill bar: ≥" + AM4_RB_GOOD_FILL_PCT +
+            "% (Explorer may be stricter). The +10% Speed modification is required for these distance bands and will be installed during the rebuild.</div>" +
             warn;
-        if (prevFrom !== am4RbSel.from || !am4RbSel.hubList.length) {
+        if (prevFrom !== am4RbSel.from || prevType !== am4RbSel.typeId || !am4RbSel.hubList.length) {
             am4RbHubsForStrategy(am4RbSel.from, false).then(function (hubs) {
                 am4RbSel.hubList = hubs;
                 if (!am4RbSel.userPicked) { am4RbSel.hubs = {}; am4RbSel.forceHubs = {}; }
@@ -15931,39 +16134,73 @@ function am4RbOnAnalyse() {
     am4RbSel.scanning = true;
     document.getElementById('am4RbCancelScan').style.display = '';
     var toN = am4RbSel.to;
-    var flownMap = am4ExpBuildFlownMap();
-    var results = [], idx = 0;
-    var next = function () {
-        if (!am4RbSel.scanning) return Promise.resolve();
-        if (idx >= hubs.length) return Promise.resolve();
-        var h = hubs[idx];
-        am4RbAnalyseMsg('hub ' + (idx + 1) + '/' + hubs.length + ' — ' + h.hubIcao + '…');
-        return am4RbScanHubRaw(h.hubId, toN, { force: !!am4RbSel.forceHubs[h.hubId] }, function (i, n, country) {
-            am4RbAnalyseMsg('hub ' + (idx + 1) + '/' + hubs.length + ' — ' + h.hubIcao +
-                ': country ' + i + '/' + n + ' (' + country + ')');
-        }).then(function (res) {
-            if (!res) return;
-            var scored = am4RbScoreDests(res.rows, h.hubId, toN, flownMap);
-            var paired = am4RbPair(h.planes, scored.good, h.hubId, h.hubIcao, toN);
-            results.push({
-                hub: h, fromCache: res.fromCache, capped: res.capped || [],
-                destCount: scored.goodCount, pairs: paired.pairs, unpaired: paired.unpaired
+    am4RbEnsureAircraftStats().then(function () {
+        var scoreCfg = am4RbBuildScoreCfg(toN);
+        if (!scoreCfg || !(scoreCfg.seats > 0)) {
+            am4RbSel.scanning = false;
+            document.getElementById('am4RbCancelScan').style.display = 'none';
+            am4RbAnalyseMsg('Could not read seat capacity for ' + am4AircraftName() +
+                ' — open 🔎 Explorer, pick this type, wait for order stats, then retry.','#ef4444');
+            return;
+        }
+        var flownMap = am4ExpBuildFlownMap();
+        var results = [], idx = 0;
+        var next = function () {
+            if (!am4RbSel.scanning) return Promise.resolve();
+            if (idx >= hubs.length) return Promise.resolve();
+            var h = hubs[idx];
+            am4RbAnalyseMsg('hub ' + (idx + 1) + '/' + hubs.length + ' — ' + h.hubIcao + '…');
+            return am4RbScanHubRaw(h.hubId, toN, { force: !!am4RbSel.forceHubs[h.hubId] }, function (i, n, country) {
+                am4RbAnalyseMsg('hub ' + (idx + 1) + '/' + hubs.length + ' — ' + h.hubIcao +
+                    ': country ' + i + '/' + n + ' (' + country + ')');
+            }).then(function (res) {
+                if (!res) return;
+                var scored = am4RbScoreDests(res.rows, h.hubId, toN, flownMap);
+                var paired = am4RbPair(h.planes, scored.good, h.hubId, h.hubIcao, toN);
+                results.push({
+                    hub: h, fromCache: res.fromCache, capped: res.capped || [],
+                    destCount: scored.goodCount, pairs: paired.pairs, unpaired: paired.unpaired,
+                    stats: scored.stats, rowCount: (res.rows || []).length, scoreCfg: scored.cfg
+                });
+                delete am4RbSel.forceHubs[h.hubId];
+                idx++;
+                return next();
             });
-            delete am4RbSel.forceHubs[h.hubId]; // swept now; the fresh result is the cache
-            idx++;
-            return next();
+        };
+        return next().then(function () {
+            am4RbSel.scanning = false;
+            document.getElementById('am4RbCancelScan').style.display = 'none';
+            am4RbSel.plan = { toN: toN, fromN: am4RbSel.from, hubs: results, scoreCfg: scoreCfg };
+            var pairs = results.reduce(function (a, r) { return a + r.pairs.length; }, 0);
+            var goodTotal = results.reduce(function (a, r) { return a + (r.destCount || 0); }, 0);
+            var cached = results.filter(function (r) { return r.fromCache; }).length;
+            if (!pairs && goodTotal) {
+                am4RbAnalyseMsg('Found ' + goodTotal + ' Strategy ' + toN + ' route(s) but none could be paired — check the rebuild queue for conflicts.','#f59e0b');
+            } else if (!pairs && !goodTotal) {
+                var agg = { rows: 0, inBand: 0, fillFail: 0, rwyFail: 0, distFail: 0, zeroRev: 0 };
+                results.forEach(function (r) {
+                    var st = r.stats || {};
+                    Object.keys(agg).forEach(function (k) { agg[k] += st[k] || 0; });
+                });
+                var detail = am4RbFormatScoreStats(agg);
+                var hint = 'Rebuild scores at fill ≥ ' + scoreCfg.goodFillPct + '%, ' +
+                    scoreCfg.seats + ' seats, rwy ≥ ' + Number(scoreCfg.minRwy).toLocaleString() + ' ft, band ' +
+                    Number(scoreCfg.bandLo).toLocaleString() + '–' + Number(scoreCfg.bandHi).toLocaleString() + ' km.';
+                if (!agg.rows) {
+                    am4RbAnalyseMsg('No research rows returned — click ↻ on each hub to rescan (cached data may be empty).','#f59e0b');
+                } else if (agg.fillFail && agg.fillFail >= agg.inBand) {
+                    am4RbAnalyseMsg('Routes exist but demand at ' + toN + '×/24h is too thin for ' +
+                        scoreCfg.goodFillPct + '% fill (' + detail + '). ' + hint,'#f59e0b');
+                } else {
+                    am4RbAnalyseMsg('No Strategy ' + toN + ' routes passed filters (' + (detail || 'no rows') + '). ' + hint,'#f59e0b');
+                }
+            } else {
+                am4RbAnalyseMsg('✓ ' + pairs + ' aircraft can move to Strategy ' + toN +
+                    ' · ' + cached + '/' + results.length + ' hubs from cache','#10b981');
+            }
+            am4RbRenderReview();
+            am4RbRenderHubList();
         });
-    };
-    next().then(function () {
-        am4RbSel.scanning = false;
-        document.getElementById('am4RbCancelScan').style.display = 'none';
-        am4RbSel.plan = { toN: toN, fromN: am4RbSel.from, hubs: results };
-        var pairs = results.reduce(function (a, r) { return a + r.pairs.length; }, 0);
-        var cached = results.filter(function (r) { return r.fromCache; }).length;
-        am4RbAnalyseMsg('✓ ' + pairs + ' aircraft can move to Strategy ' + toN +
-            ' · ' + cached + '/' + results.length + ' hubs from cache','#10b981');
-        am4RbRenderReview();
-        am4RbRenderHubList();
     }).catch(function (e) {
         am4RbSel.scanning = false;
         document.getElementById('am4RbCancelScan').style.display = 'none';
@@ -15995,7 +16232,14 @@ function am4RbRenderReview() {
     });
     if (!n) {
         box.innerHTML ="<div style='color:#f59e0b; font-size:11px;'>No aircraft could be paired with a destination in the Strategy " +
-            plan.toN +" band. Either the band has no fillable destinations from these hubs, or every candidate is already taken.</div>" ;
+            plan.toN +" band." +
+            (plan.scoreCfg
+                ? (" Scored with " + plan.scoreCfg.seats + " seats, fill ≥ " + plan.scoreCfg.goodFillPct +
+                   "%, rwy ≥ " + Number(plan.scoreCfg.minRwy).toLocaleString() + " ft, band " +
+                   Number(plan.scoreCfg.bandLo).toLocaleString() + "–" +
+                   Number(plan.scoreCfg.bandHi).toLocaleString() + " km.")
+                : "") +
+            " Click ↻ on hubs to rescan if cached data is stale.</div>" ;
         return;
     }
     var overCap = (AM4_RB_MAX_QUEUE_PER_RUN > 0 && n > AM4_RB_MAX_QUEUE_PER_RUN);
