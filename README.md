@@ -21,6 +21,8 @@ This bot is currently DONE with development and its functionality is PERFECT. It
 - [x] route explorer to find best routes for all hubs and auto-builds those routes for you
 - [x] rebuild routes to your liking
 - [x] status tab to show what's happening and when the next features will run
+- [x] AM4 automation suite: auto depart (departs the whole queue), buy/marketing/repair/check, price multipliers, best-hub highlighter, Research Explorer (ranks hubs by good routes for the selected aircraft type), one-click Auto-Build pipeline (order named+configured → modify CO2/speed/fuel → route, from the Explorer, fail-closed queue), Fleet Assistant (fleet state + manual capped buyer for any aircraft type + manual route builder), separate 🔧 Modify panel (seats + speed/fuel/CO2 upgrades, parked & routed aircraft), quiet hours (idle overnight), real 24h net income in the overlay, status dashboard with a persisted action log (departed/bought/built…), hard spend guards (never-spend-points + daily/per-cycle caps), settings panel (⚙) with per-campaign marketing, all suite windows draggable + collapsible (Explorer/Fleet/Modify/Build/Status/Settings/Financial, positions remembered), collapsible overlay and randomized timing
+
 
 ## Installation
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser extension on your preferred browser.
