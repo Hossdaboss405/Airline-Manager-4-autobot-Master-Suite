@@ -7,21 +7,39 @@ Please note that this bot is against the Terms of Service of the game and its us
 ## Usage
 This bot is currently DONE with development and its functionality is PERFECT. It can currently automate the following tasks:
 - [x] Toggles for all auto functions
-- [x] Sidebar menu to change all settings to your liking and adjusting timings and much more
-- [x] Departing all planes
-- [x] Better autoprice when setting up new routes works for cargo and pax
-- [x] Auto-start Marketing campaign
+- [x] Sidebar / ⚙ settings panel to change thresholds, timings, multipliers, campaigns, and more
+- [x] Depart all ready planes (full gate queue, multi-batch)
+- [x] Better autoprice when setting up new routes (pax Y/J/F and cargo Large/Heavy)
+- [x] Auto-start marketing campaigns (per-type strength/duration; never auto-buys points campaigns)
 - [x] Buy fuel at low price
-- [x] Buy CO2 quotas at low price
-- [x] Launch A-checks for all planes below 250 hours
-- [x] Auto Repair all planes lower than 20%
-- [x] best hub purchase suggestions (highlighted for both country and airport)
-- [x] financial metrics overlay that shows net income/minute avg fuel/co2 spending (activates as soon as script starts and updates every 10 minutes)
-- [x] financial metrics now also show the alliance contribution/day as well as integrated method to calculate the alliance contribution per flight "C/F"
-- [x] route explorer to find best routes for all hubs and auto-builds those routes for you
-- [x] rebuild routes to your liking
-- [x] status tab to show what's happening and when the next features will run
-- [x] AM4 automation suite: auto depart (departs the whole queue), buy/marketing/repair/check, price multipliers, best-hub highlighter, Research Explorer (ranks hubs by good routes for the selected aircraft type), one-click Auto-Build pipeline (order named+configured → modify CO2/speed/fuel → route, from the Explorer, fail-closed queue), Fleet Assistant (fleet state + manual capped buyer for any aircraft type + manual route builder), separate 🔧 Modify panel (seats + speed/fuel/CO2 upgrades, parked & routed aircraft), quiet hours (idle overnight), real 24h net income in the overlay, status dashboard with a persisted action log (departed/bought/built…), hard spend guards (never-spend-points + daily/per-cycle caps), settings panel (⚙) with per-campaign marketing, all suite windows draggable + collapsible (Explorer/Fleet/Modify/Build/Status/Settings/Financial, positions remembered), collapsible overlay and randomized timing
+- [x] Buy CO₂ quotas at low price
+- [x] Launch A-checks for all planes below your hour threshold (default-style: below 250h configurable)
+- [x] Auto-repair planes above your wear threshold (configurable, e.g. 20%)
+- [x] Best hub purchase suggestions (highlighted country + airport)
+- [x] Financial metrics overlay (net income, avg fuel/CO₂ spend; starts with the script)
+- [x] Alliance contribution/day in the overlay + C/F (contribution per flight)
+- [x] Research Explorer to find best routes for all hubs
+- [x] One-click Auto-Build from Explorer (order → configure → modify → route)
+- [x] Cargo-aware Auto-Build / Modify / Build Route (correct Large/Heavy loads & tickets)
+- [x] Rebuild routes to your liking (strategy From→To, optional auto-queue / overnight Auto-run)
+- [x] Fleet Assistant (fleet state + manual capped buyer + manual route builder)
+- [x] Separate 🔧 Modify panel (seats + speed/fuel/CO₂; parked & routed; cargo reconfigure)
+- [x] Status tab with live module state + persisted action log
+- [x] Price audit (fix under- and overpriced tickets → Auto × your multipliers; before depart + optional background)
+- [x] Auto staff morale (min-salary dance for Pilots, Crew, Engineers, Technicians)
+- [x] Auto hub lounge repair (wear threshold configurable)
+- [x] Auto hub catering purchase when missing (duration/amount configurable)
+- [x] Seat rebalance for at-base planes (no reroute)
+- [x] Explorer hub capacity planner (suggest buys from remaining ★ routes)
+- [x] Alliance high-cash remind and optional auto-donate
+- [x] Delivery watch: after delivery mods, auto-route from Explorer remaining
+- [x] Route health check (band/stack report in the log)
+- [x] Quiet hours (idle overnight)
+- [x] Hard spend guards (never-spend-points, daily/per-cycle caps, cash reserve, aircraft order caps)
+- [x] Acting-tab lock so only one browser tab mutates the game
+- [x] All suite windows draggable + collapsible (positions remembered)
+- [x] Collapsible overlay + randomized timing jitter
+
 
 
 ## Installation
