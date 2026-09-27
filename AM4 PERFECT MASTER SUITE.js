@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name AM4 MASTER SUITE MADE BY HOSS
 // @namespace http://tampermonkey.net/
-// @version 2.69
-// @description AM4 automation suite: price audit all landed (↑under ↓over); freighter Build Route L/H; cargo modify
+// @version 2.108
+// @description AM4 automation suite (PC edition): Prep & create route (modify→wait→route)
 // @author HOSS
 // @match *://airlinemanager.com/*
 // @match *://*.airlinemanager.com/*
@@ -24,7 +24,18 @@
 (function() {
 'use strict';
 
-var AM4_SUITE_VERSION = '2.69';
+var AM4_SUITE_VERSION = '2.108';
+var AM4_SUITE_EDITION = 'pc';
+
+if (typeof window !== 'undefined') {
+    if (window.__AM4_HOSS_SUITE_EDITION__) {
+        try {
+            console.warn('[AM4 Bot Log] Another HOSS suite edition is already loaded (' +
+                window.__AM4_HOSS_SUITE_EDITION__ + '). Disable one script — use ONLY the PC edition OR the cross-platform file.');
+        } catch (eDup) { /* ignore */ }
+    }
+    window.__AM4_HOSS_SUITE_EDITION__ = AM4_SUITE_EDITION;
+}
 
 var am4NativeConsoleLog = (typeof console !== 'undefined' && console.log)
     ? console.log.bind(console) : function () {};
@@ -164,6 +175,9 @@ var AM4_DEFAULT_CONFIG = {
     hubLoungeWearPct: 16, // repair when lounge wear ≥ this %
     hubCateringDuration: '168', // hours option value on #durationSelector
     hubCateringAmount: '20000', // option value on #caterAmount
+    // Easy vs Realism (ticket formulas / runway). Scheduled vs Charter (Eco+Biz only, charter=1).
+    gameMode: 'easy', // 'easy' | 'realism'
+    aircraftService: 'scheduled', // 'scheduled' | 'charter' (charter: Y+J only, up to ~10 deps/aircraft)
     restoreToggles: false,
     // Financial overlay placement / state
     overlayEnabled: true,
@@ -174,6 +188,10 @@ var AM4_DEFAULT_CONFIG = {
     // are refreshed by a light background read of alliance.php every few minutes.
     allianceMemberId: '',
     allianceRefreshMin: 10,
+    // Alliance weekly report (🤝): Weekly delta (end−start) or Live snapshot
+    allianceReportDays: 7,
+    allianceReportThreshold: 25000,
+    allianceReportMode: 'period', // 'period' | 'live'
     // How often to read the game's own 24h accounting (transactions.php?mode=summary)
     // for the honest Income/Expenses/Net rows in the overlay. A slow background read.
     financeRefreshMin: 15,
@@ -261,6 +279,8 @@ var AM4_NUM_BOUNDS = {
     departBatchDelaySec: [1, 300],
     jitterPercent: [0, 40],
     allianceRefreshMin: [2, 120],
+    allianceReportDays: [1, 90],
+    allianceReportThreshold: [0, 1e12],
     quietFrom: [0, 23],
     quietTo: [0, 23],
     financeRefreshMin: [2, 120],
@@ -433,6 +453,12 @@ function loadAm4Config() {
             merged.staffMoraleEnabled = true;
         }
     }
+    if (String(merged.gameMode || '').toLowerCase() !== 'realism') merged.gameMode = 'easy';
+    else merged.gameMode = 'realism';
+    if (String(merged.aircraftService || '').toLowerCase() !== 'charter') merged.aircraftService = 'scheduled';
+    else merged.aircraftService = 'charter';
+    if (String(merged.allianceReportMode || '').toLowerCase() !== 'live') merged.allianceReportMode = 'period';
+    else merged.allianceReportMode = 'live';
     return merged;
 }
 
@@ -646,6 +672,7 @@ function am4EscapeHtml(s) {
 // and snap-to-grid / snap-to-edge when a panel is dropped.
 //================================================================================
 var AM4_PANEL_META = {
+    alliance: { icon: '🤝', label: 'Alliance'},
     explorer: { icon: '🔎', label: 'Explorer'},
     fleet: { icon: '✈', label: 'Fleet'},
     modify: { icon: '🔧', label: 'Modify'},
@@ -657,7 +684,7 @@ var AM4_PANEL_META = {
 };
 // Cascade order = the order above. Each later panel opens a little further down/left
 // so a stack of panels stays individually reachable.
-var AM4_PANEL_ORDER = ['explorer','fleet','modify','build','rebuild','status','settings','overlay' ];
+var AM4_PANEL_ORDER = ['alliance','explorer','fleet','modify','build','rebuild','status','settings','overlay' ];
 var AM4_DOCK_KEY = 'am4DockHidden';
 var AM4_Z_BASE = 1030; // game modals sit at 1050 - never reach it
 var AM4_Z_MAX = 1048;
@@ -1843,7 +1870,13 @@ function injectAm4Styles() {
         ".am4-btn-row { display:flex; gap:8px; margin-top:12px; justify-content:flex-end; }",
         "#am4LiveTicker { font-size:9px; color:#38bdf8; font-family:monospace; white-space:nowrap; max-width:180px; overflow:hidden; text-overflow:ellipsis; }",
         "#am4LiveToast { position:fixed; top:72px; left:50%; transform:translateX(-50%); z-index:1045; background:rgba(15,19,26,0.96); border:1px solid #38bdf8; color:#e2e8f0; font-family:monospace; font-size:13px; font-weight:bold; padding:8px 16px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.55); pointer-events:none; opacity:0; transition:opacity .2s; white-space:nowrap; max-width:min(90vw, 520px); overflow:hidden; text-overflow:ellipsis; }",
-        "#am4LiveAction { min-height:16px; font-size:11px; font-weight:bold; color:#38bdf8; margin:0 0 6px 0; line-height:1.3; }"
+        "#am4LiveAction { min-height:16px; font-size:11px; font-weight:bold; color:#38bdf8; margin:0 0 6px 0; line-height:1.3; }",
+        // Fallback host when the game navbar is missing / delayed (otherwise the suite
+        // looked "broken" while it silently retried forever with nothing on screen).
+        "#am4PcFallbackShell { position:fixed; left:50%; transform:translateX(-50%); top:8px; z-index:1030;",
+        "max-width:calc(100vw - 16px); max-height:40vh; overflow:auto; padding:0; margin:0; }",
+        "#am4PcFallbackShell #am4ControlBar { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:0;",
+        "padding:6px 10px; border-radius:14px; box-shadow:0 8px 28px rgba(0,0,0,.55); }"
     ].join("\n");
     document.head.appendChild(style);
 }
@@ -1861,12 +1894,40 @@ function am4FindNavbarTarget() {
            null;
 }
 
+function am4GetPcFallbackShell() {
+    var shell = document.getElementById('am4PcFallbackShell');
+    if (!shell) {
+        shell = document.createElement('div');
+        shell.id = 'am4PcFallbackShell';
+        shell.setAttribute('role', 'toolbar');
+        shell.setAttribute('aria-label', 'AM4 Suite controls (fallback)');
+        document.body.appendChild(shell);
+    }
+    return shell;
+}
+
+var am4InjectTries = 0;
+
 function injectToggleControls() {
     if (document.getElementById("autoDepartCheckbox")) return;
+    am4InjectTries++;
     var navbarTarget = am4FindNavbarTarget();
+    var usedFallback = false;
+    // After ~8s of no usable navbar, mount a floating bar so users still see the suite
+    // (common when the game layout differs or the top menu is late / missing).
     if (!navbarTarget) {
-        setTimeout(injectToggleControls, 1000);
-        return;
+        if (am4InjectTries < 8) {
+            setTimeout(injectToggleControls, 1000);
+            return;
+        }
+        if (!document.body) {
+            setTimeout(injectToggleControls, 500);
+            return;
+        }
+        navbarTarget = am4GetPcFallbackShell();
+        usedFallback = true;
+        console.log('[AM4 Bot Log] Game navbar not found after ' + am4InjectTries +
+            's — mounting floating control bar fallback. If you never saw this log, Tampermonkey did not inject the script.');
     }
     injectAm4Styles();
     var items = [
@@ -1876,9 +1937,14 @@ function injectToggleControls() {
         { id:"autoRepairCheckbox" , label:"Auto-Repair" , trigger: triggerRepairToggle },
         { id:"autoCheckCheckbox" , label:"Auto-Check" , trigger: triggerCheckToggle }
     ];
-    var li = document.createElement("li");
-    li.className ="nav-item" ;
-    li.style.cssText ="display:inline-block; vertical-align:middle;" ;
+    var li = document.createElement(usedFallback ? "div" : "li");
+    if (!usedFallback) {
+        li.className ="nav-item" ;
+        li.style.cssText ="display:inline-block; vertical-align:middle;" ;
+    } else {
+        li.className = "am4-pc-fallback-host";
+        li.style.cssText = "display:block; width:100%;";
+    }
     var bar = document.createElement("div");
     bar.id ="am4ControlBar" ;
     var brand = document.createElement("span");
@@ -1941,12 +2007,21 @@ function injectToggleControls() {
     var oldStratPanel = document.getElementById('am4StrategyPanel');
     if (oldStratPanel) oldStratPanel.remove();
     am4InjectStatusButton();
+    am4AllyInjectButton();
     am4FleetInjectButton();
     am4RbInjectButton();
     am4UpdateQuietBadge();
     restoreToggleStates();
     am4UiEverMounted = true;
-    console.log("[AM4 Bot Log] Navbar control center interface mounted successfully.");
+    console.log("[AM4 Bot Log] Navbar control center interface mounted successfully" +
+        (usedFallback ? " (floating fallback)." : "."));
+    try {
+        if (typeof am4ShowLiveAction === 'function') {
+            am4ShowLiveAction(usedFallback
+                ? ('AM4 Suite v' + AM4_SUITE_VERSION + ' loaded (floating bar — navbar missing)')
+                : ('AM4 Suite v' + AM4_SUITE_VERSION + ' loaded'), '#38bdf8');
+        }
+    } catch (eToast) { /* ignore */ }
 }
 
 // AM4 re-renders its navbar over AJAX on some navigations, which takes the whole
@@ -2051,6 +2126,9 @@ var AM4_SETTINGS_SCHEMA = [
     { section:"ALLIANCE CONTRIBUTION" },
     { key:"allianceMemberId" , label:"Member id (blank = auto)" , type:"text" , placeholder:"auto-detect" },
     { key:"allianceRefreshMin" , label:"Refresh every (min)" , type:"float" , min: 2 },
+    { key:"allianceReportDays" , label:"Alliance period days basis" , type:"int" , min: 1, max: 90 },
+    { key:"allianceReportThreshold" , label:"Alliance Contr./day green if ≥" , type:"int" , min: 0 },
+    { key:"allianceReportMode" , label:"Alliance report mode" , type:"select" , valueType:"string" , options: [["period","Weekly delta (end − start)" ], ["live","Live snapshot" ]] },
     { section:"QUIET HOURS (be idle overnight)" },
     { key:"quietHoursEnabled" , label:"Enable quiet hours" , type:"bool" },
     { key:"quietFrom" , label:"Quiet from (hour 0-23)" , type:"int" , min: 0, max: 23 },
@@ -2079,7 +2157,7 @@ var AM4_SETTINGS_SCHEMA = [
     { key:"priceAuditEnabled" , label:"Price audit before depart (fix under- AND overpriced → Auto × multipliers)" , type:"bool" },
     { key:"priceAuditHrs" , label:"Also background price audit every (hrs)" , type:"float" , min: 1 },
     { section:"STAFF MORALE" },
-    { key:"staffMoraleEnabled" , label:"Auto staff morale (min-salary dance · all 4 roles)" , type:"bool" },
+    { key:"staffMoraleEnabled" , label:"Auto staff morale (min-salary dance · only roles below 100%)" , type:"bool" },
     { key:"staffHrHrs" , label:"Staff check every (hrs)" , type:"float" , min: 0.25 },
     { section:"HUBS (lounge repair / catering)" },
     { key:"hubLoungeRepairEnabled" , label:"Auto repair hub lounges" , type:"bool" },
@@ -2089,6 +2167,9 @@ var AM4_SETTINGS_SCHEMA = [
     { key:"hubLoungeWearPct" , label:"Repair lounge when wear ≥ (%)" , type:"int" , min: 1, max: 100 },
     { key:"hubCateringDuration" , label:"Catering duration (hrs option)" , type:"select" , valueType:"string" , options:[["6","6 h"],["12","12 h"],["18","18 h"],["24","24 h"],["48","48 h"],["72","72 h"],["96","96 h"],["120","120 h"],["144","144 h"],["168","168 h (7d)"]] },
     { key:"hubCateringAmount" , label:"Catering amount option" , type:"select" , valueType:"string" , options:[["200","200"],["500","500"],["1000","1,000"],["2000","2,000"],["3000","3,000"],["4000","4,000"],["5000","5,000"],["10000","10,000"],["15000","15,000"],["20000","20,000"],["50000","50,000"],["100000","100,000"],["200000","200,000"]] },
+    { section:"GAME MODE & SERVICE" },
+    { key:"gameMode" , label:"Game mode (Easy / Realism)" , type:"select" , valueType:"string" , options:[["easy","Easy"],["realism","Realism"]] },
+    { key:"aircraftService" , label:"Aircraft service (Scheduled / Charter)" , type:"select" , valueType:"string" , options:[["scheduled","Scheduled (Y/J/F or cargo)"],["charter","Charter (Economy + Business only)"]] },
     { section:"TIMERS & BEHAVIOR" },
     // Capped at 40 on purpose: the downside of a draw is clamped at 0.6x so functional
     // waits are never cut to nothing, which means anything above 40 would no longer be
@@ -2336,6 +2417,8 @@ function applySettingsFromPanel() {
     var prevOverlayPosition = AM4_CONFIG.overlayPosition;
     var prevCampaignsJson = JSON.stringify(AM4_CONFIG.campaigns || []);
     var prevStaffMorale = !!AM4_CONFIG.staffMoraleEnabled;
+    var prevGameMode = AM4_CONFIG.gameMode;
+    var prevAircraftService = AM4_CONFIG.aircraftService;
     panel.querySelectorAll("[data-key]").forEach(function(input) {
         var key = input.getAttribute("data-key");
         var type = input.getAttribute("data-type");
@@ -2386,7 +2469,25 @@ function applySettingsFromPanel() {
     });
     AM4_CONFIG.eliteCountries = parseList("am4EliteCountries");
     AM4_CONFIG.highYieldAirports = parseList("am4HighYieldAirports");
+    if (String(AM4_CONFIG.gameMode || '').toLowerCase() !== 'realism') AM4_CONFIG.gameMode = 'easy';
+    else AM4_CONFIG.gameMode = 'realism';
+    if (String(AM4_CONFIG.aircraftService || '').toLowerCase() !== 'charter') AM4_CONFIG.aircraftService = 'scheduled';
+    else AM4_CONFIG.aircraftService = 'charter';
     saveAm4Config();
+    if (typeof am4CharterEnsureStrategyN === 'function' && am4IsCharter() &&
+        String(prevAircraftService || '') !== 'charter') {
+        am4CharterEnsureStrategyN();
+    }
+    if (String(prevGameMode || '') !== String(AM4_CONFIG.gameMode || '') ||
+        String(prevAircraftService || '') !== String(AM4_CONFIG.aircraftService || '')) {
+        try {
+            if (typeof am4ExpSaveCache === 'function') am4ExpSaveCache({});
+        } catch (eCache) { /* ignore */ }
+        try {
+            if (typeof am4RbCacheClear === 'function') am4RbCacheClear();
+        } catch (eRb) { /* ignore */ }
+        console.log('[AM4 Bot Log] Game mode/service changed — Explorer & Rebuild caches cleared.');
+    }
     // A changed quiet-hours setting should reflect in the badge immediately. The
     // schedulers pick the new window up on their next tick on their own.
     am4UpdateQuietBadge();
@@ -4146,7 +4247,9 @@ function am4ApplyPriceMultipliers(scope, source) {
     // Cargo is recognised by its OWN fields being present, not by a passenger field
     // being absent somewhere on the page - a hidden leftover #fTicket used to make a
     // cargo route look like a passenger route.
-    if (cargoLarge && cargoHeavy && !(eco && biz && first && scope.querySelector('#price_f, #fTicket, #fSeat'))) {
+    // Charter Y+J panels must not be treated as freighter L/H (missing First).
+    if (cargoLarge && cargoHeavy && !(eco && biz && first && scope.querySelector('#price_f, #fTicket, #fSeat')) &&
+        !(typeof am4IsCharter === 'function' && am4IsCharter() && eco && biz)) {
         var baseLarge = parseFloat(cargoLarge.value) || 0;
         var baseHeavy = parseFloat(cargoHeavy.value) || 0;
         if (baseLarge <= 0 || baseHeavy <= 0) return false;
@@ -4163,6 +4266,23 @@ function am4ApplyPriceMultipliers(scope, source) {
         // passenger seat fields only and does not know about cargo at all.
         console.log('[AM4 Bot Log] Cargo pricing (' + source + ') -> Large: $' + calcLarge.toFixed(2) +
             ' | Heavy: $' + calcHeavy.toFixed(2));
+        return true;
+    }
+
+    // Charter: Economy + Business only (First may be missing or stuck at 0).
+    if (typeof am4IsCharter === 'function' && am4IsCharter()) {
+        if (!(eco && biz)) return false;
+        var cY = parseFloat(eco.value) || 0;
+        var cJ = parseFloat(biz.value) || 0;
+        if (cY <= 0 || cJ <= 0) return false;
+        if (am4AlreadyPriced(eco) || am4AlreadyPriced(biz)) return false;
+        var outY = Math.floor(cY * AM4_CONFIG.paxMultiEco);
+        var outJ = Math.floor(cJ * AM4_CONFIG.paxMultiBiz);
+        am4WritePriceField(eco, outY, false);
+        am4WritePriceField(biz, outJ, false);
+        if (first) am4WritePriceField(first, 0, false);
+        am4AppliedPax = { y: outY, j: outJ, f: 0 };
+        console.log('[AM4 Bot Log] Charter pricing (' + source + ') -> Eco: $' + outY + ' | Biz: $' + outJ);
         return true;
     }
 
@@ -4616,32 +4736,42 @@ function am4AllianceCellNumber(td) {
 
 function am4ParseAllianceNumber(raw) {
     var text = String(raw || '').trim();
-    if (!text) return 0;
+    if (!text || /^n\/?a$/i.test(text)) return 0;
+    if (/\b(ago|secs?|mins?|hours?|days?|weeks?|months?|years?)\b/i.test(text) && !/\$/.test(text)) return 0;
     if (/[kmbt]\b/i.test(text)) {
-        var compact = parseFloat(text.replace(/[^0-9.]/g,'')) || 0;
+        var compact = parseFloat(text.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
         if (/b\b/i.test(text)) compact *= 1e9;
         else if (/m\b/i.test(text)) compact *= 1e6;
         else if (/k\b/i.test(text)) compact *= 1e3;
-        return compact;
+        return Math.round(compact);
     }
-    var value = parseFloat(text.replace(/[^0-9.]/g,'').replace(/\./g,'')) ||
-        parseInt(text.replace(/[^0-9]/g,''), 10) || 0;
-    if (value < 1000 && text.indexOf('.') !== -1 && text.indexOf(',') === -1) {
-        value = parseInt(text.replace(/[^0-9]/g,''), 10) || 0;
+    var cleaned = text.replace(/\$/g, '').replace(/\s/g, '');
+    // European thousands: 49.270.371
+    if (/^\d{1,3}(\.\d{3})+$/.test(cleaned)) {
+        return parseInt(cleaned.replace(/\./g, ''), 10) || 0;
     }
-    return value;
+    if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(cleaned)) {
+        return parseInt(cleaned.replace(/\./g, '').replace(/,.*/, ''), 10) || 0;
+    }
+    // American: 49,270,371 or 42,302.20 → nearest dollar
+    cleaned = cleaned.replace(/,/g, '');
+    var n = parseFloat(cleaned.replace(/[^0-9.-]/g, ''));
+    return isFinite(n) ? Math.round(n) : 0;
 }
 
 function am4MapAllianceColumns(row) {
     var table = row && row.closest ? row.closest('table') : null;
     var headerCells = table ? table.querySelectorAll('thead th, thead td, tr:first-child th') : [];
-    var map = { lifetime: -1, daily: -1, flights: -1 };
+    // Default AM4 layout: Name Share Lifetime Daily Joined Flights Last Season
+    var map = { share: 1, lifetime: 2, daily: 3, flights: 5, season: 7 };
     for (var i = 0; i < headerCells.length; i++) {
         var label = String(headerCells[i].innerText || '').replace(/\s+/g,' ').trim().toLowerCase();
         if (!label) continue;
-        if (map.daily < 0 && /(per day|\/ ?day|daily|today)/.test(label)) map.daily = i;
-        else if (map.lifetime < 0 && /contrib/.test(label)) map.lifetime = i;
-        if (map.flights < 0 && /flight/.test(label)) map.flights = i;
+        if (/(per day|\/ ?day|daily|today)/.test(label)) map.daily = i;
+        else if (/season|week|period/.test(label)) map.season = i;
+        else if (/share|value/.test(label)) map.share = i;
+        else if (/flight/.test(label)) map.flights = i;
+        else if (/contrib|lifetime|total/.test(label)) map.lifetime = i;
     }
     return map;
 }
@@ -4724,6 +4854,587 @@ function am4RenderAllianceMetrics() {
     var day = document.getElementById('metricOverlayAllianceDay');
     if (flt) flt.innerText = am4AllianceCache.perFlight > 0 ?'$' + am4AllianceCache.perFlight.toLocaleString() : '—';
     if (day) day.innerText = am4AllianceCache.perDay > 0 ?'$' + am4AllianceCache.perDay.toLocaleString() + ' /d' : '—';
+}
+
+//================================================================================
+// Alliance weekly report (🤝 panel) — dual mode on top of 2.77
+// Weekly delta: Contribution/Flights = end lifetime − start lifetime
+//   Contr./day = Contribution / days · c/f = floor((Contribution×1000)/Flights)
+//   Grow % vs previous Contribution
+// Live snapshot: game Contr./day + Season columns
+//   c/f = floor((lifetime×1000)/flights) · Grow % vs previous Season
+//================================================================================
+var AM4_ALLY_WEEK_START_KEY = 'am4AllianceWeekStart';
+var AM4_ALLY_PREV_PERIOD_KEY = 'am4AllianceWeekPrev_period';
+var AM4_ALLY_PREV_LIVE_KEY = 'am4AllianceWeekPrev_live';
+var am4AllyWeekLive = [];
+var am4AllyWeekReport = [];
+var am4AllyReportMode = 'period';
+
+function am4AllyEsc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function am4AllyCf(contrib, flights) {
+    if (!(contrib > 0) || !(flights > 0)) return null;
+    return Math.floor((contrib * 1000) / flights);
+}
+
+function am4AllyFmt(n) {
+    if (n == null || !isFinite(n)) return '—';
+    return Math.round(n).toLocaleString('en-US');
+}
+
+// Snapshots used to store lifetime as `contrib`; live rows use `lifetime`.
+function am4AllyRowLifetime(r) {
+    if (!r) return 0;
+    if (r.lifetime != null && isFinite(Number(r.lifetime))) return Number(r.lifetime) || 0;
+    if (r.contrib != null && isFinite(Number(r.contrib))) return Number(r.contrib) || 0;
+    return 0;
+}
+
+function am4AllyRowFlights(r) {
+    if (!r) return 0;
+    return Number(r.flights) || 0;
+}
+
+function am4AllyLoadJson(key) {
+    try {
+        var raw = JSON.parse(localStorage.getItem(key) || 'null');
+        return raw && typeof raw === 'object' ? raw : null;
+    } catch (e) { return null; }
+}
+
+function am4AllySaveJson(key, obj) {
+    try { localStorage.setItem(key, JSON.stringify(obj)); } catch (e) { /* ignore */ }
+}
+
+function am4AllyGetMode() {
+    var sel = document.getElementById('am4AllyMode');
+    if (sel && sel.value) return sel.value === 'live' ? 'live' : 'period';
+    return (AM4_CONFIG.allianceReportMode === 'live') ? 'live' : 'period';
+}
+
+function am4AllyPrevKey(mode) {
+    return mode === 'live' ? AM4_ALLY_PREV_LIVE_KEY : AM4_ALLY_PREV_PERIOD_KEY;
+}
+
+function am4AllianceParseAllMembers(html) {
+    var box = document.createElement('div');
+    try { box.innerHTML = html; } catch (e) { return []; }
+    var rowNodes = box.querySelectorAll("tr[id^='al-list-']");
+    if (!rowNodes.length) return [];
+    var map = am4MapAllianceColumns(rowNodes[0]);
+    var shareIndex = map.share >= 0 ? map.share : 1;
+    var lifetimeIndex = map.lifetime >= 0 ? map.lifetime : 2;
+    var dailyIndex = map.daily >= 0 ? map.daily : 3;
+    var flightsIndex = map.flights >= 0 ? map.flights : 5;
+    var seasonIndex = map.season >= 0 ? map.season : 7;
+    var out = [];
+    var i;
+    for (i = 0; i < rowNodes.length; i++) {
+        var row = rowNodes[i];
+        var tds = row.querySelectorAll('td');
+        if (!tds.length) continue;
+        var id = String(row.id || '').replace(/^al-list-/, '');
+        var name = (tds[0] ? (tds[0].innerText || '') : '').replace(/\s+/g, ' ').trim();
+        if (!name) continue;
+        var share = am4AllianceCellNumber(tds[shareIndex]);
+        var lifetime = am4AllianceCellNumber(tds[lifetimeIndex]);
+        var perDay = am4AllianceCellNumber(tds[dailyIndex]);
+        var flights = am4AllianceCellNumber(tds[flightsIndex]);
+        var season = am4AllianceCellNumber(tds[seasonIndex]);
+        if (!(season > 0) && tds.length >= 8) {
+            season = am4AllianceCellNumber(tds[tds.length - 1]);
+        }
+        out.push({
+            id: id,
+            name: name,
+            key: name.toLowerCase(),
+            share: share,
+            lifetime: lifetime,
+            perDay: perDay,
+            flights: flights,
+            season: season,
+            cf: am4AllyCf(lifetime, flights),
+            at: Date.now()
+        });
+    }
+    return out;
+}
+
+function am4AllianceFetchMembers() {
+    return new Promise(function (resolve, reject) {
+        var jq = (typeof window.jQuery !== 'undefined' && window.jQuery.ajax) ? window.jQuery : null;
+        if (jq) {
+            jq.ajax({
+                type: 'GET',
+                url: 'alliance.php',
+                data: { _: Date.now() },
+                cache: false,
+                dataType: 'html',
+                success: function (html) { resolve(am4AllianceParseAllMembers(html || '')); },
+                error: function () { reject(new Error('alliance.php failed')); }
+            });
+            return;
+        }
+        fetch('alliance.php?_=' + Date.now(), { credentials: 'include', cache: 'no-store' })
+            .then(function (r) { return r.text(); })
+            .then(function (html) { resolve(am4AllianceParseAllMembers(html)); })
+            .catch(reject);
+    });
+}
+
+function am4AllyWeekSetMsg(msg, color) {
+    var el = document.getElementById('am4AllyMsg');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.color = color || '#38bdf8';
+}
+
+function am4AllyWeekMeta() {
+    var mode = am4AllyGetMode();
+    var start = am4AllyLoadJson(AM4_ALLY_WEEK_START_KEY);
+    var prev = am4AllyLoadJson(am4AllyPrevKey(mode));
+    var el = document.getElementById('am4AllyMeta');
+    if (!el) return;
+    var bits = [];
+    bits.push((am4AllyWeekLive.length || 0) + ' members live');
+    bits.push('mode=' + mode);
+    if (mode === 'period') {
+        if (start && Array.isArray(start.rows)) {
+            bits.push('week start ' + new Date(start.at || 0).toLocaleString() + ' (' + start.rows.length + ')');
+        } else {
+            bits.push('no week-start snapshot yet');
+        }
+    }
+    if (prev && Array.isArray(prev.rows)) {
+        bits.push('Grow baseline ' + new Date(prev.at || 0).toLocaleString());
+    } else {
+        bits.push('no Grow baseline');
+    }
+    el.textContent = bits.join(' · ');
+}
+
+function am4AllyGrowFrom(prevMap, key, currentValue, field, hasPrev) {
+    if (prevMap[key]) {
+        var pv = prevMap[key][field];
+        if (pv > 0) return ((currentValue - pv) / pv) * 100;
+        if (currentValue > 0) return 'NEW';
+        return null;
+    }
+    if (hasPrev) return 'NEW';
+    return null;
+}
+
+function am4AllyBuildPeriodRows(startRows, endRows, days, prev) {
+    var startMap = {};
+    (startRows || []).forEach(function (r) { startMap[r.key] = r; });
+    var prevMap = {};
+    if (prev && Array.isArray(prev.rows)) {
+        prev.rows.forEach(function (r) { prevMap[r.key] = r; });
+    }
+    var rows = [];
+    (endRows || []).forEach(function (end) {
+        var start = startMap[end.key];
+        if (!start) {
+            rows.push({
+                name: end.name, key: end.key, id: end.id || '',
+                grow: 'NEW', contrib: null, flights: null, perDay: null, cf: null, isNew: true
+            });
+            return;
+        }
+        var contrib = Math.max(0, am4AllyRowLifetime(end) - am4AllyRowLifetime(start));
+        var flights = Math.max(0, am4AllyRowFlights(end) - am4AllyRowFlights(start));
+        var perDay = days > 0 ? contrib / days : null;
+        var grow = am4AllyGrowFrom(prevMap, end.key, contrib, 'contrib', !!prev);
+        rows.push({
+            name: end.name, key: end.key, id: end.id || '',
+            grow: grow, contrib: contrib, flights: flights, perDay: perDay,
+            cf: am4AllyCf(contrib, flights), isNew: grow === 'NEW'
+        });
+    });
+    rows.sort(function (a, b) {
+        if (a.isNew && a.contrib == null && !(b.isNew && b.contrib == null)) return 1;
+        if (!(a.isNew && a.contrib == null) && b.isNew && b.contrib == null) return -1;
+        return (b.perDay || 0) - (a.perDay || 0);
+    });
+    return rows;
+}
+
+function am4AllyBuildLiveRows(members, prev) {
+    var prevMap = {};
+    if (prev && Array.isArray(prev.rows)) {
+        prev.rows.forEach(function (r) { prevMap[r.key] = r; });
+    }
+    var rows = (members || []).map(function (m) {
+        var grow = am4AllyGrowFrom(prevMap, m.key, m.season || 0, 'season', !!prev);
+        return {
+            name: m.name, key: m.key, id: m.id || '',
+            grow: grow,
+            perDay: m.perDay || 0,
+            season: m.season || 0,
+            lifetime: m.lifetime || 0,
+            flights: m.flights || 0,
+            cf: am4AllyCf(m.lifetime, m.flights),
+            isNew: grow === 'NEW'
+        };
+    });
+    rows.sort(function (a, b) { return (b.perDay || 0) - (a.perDay || 0); });
+    return rows;
+}
+
+function am4AllySetTableHead(mode) {
+    var thead = document.querySelector('#am4AllyTable thead');
+    if (!thead) return;
+    if (mode === 'live') {
+        thead.innerHTML = "<tr style='background:#1e293b; color:#94a3b8;'>" +
+            "<th style='padding:5px 6px; text-align:right;'>#</th>" +
+            "<th style='padding:5px 6px; text-align:left;'>Airline</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>Grow</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>Contr./day</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>c/f</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>Season</th></tr>";
+    } else {
+        thead.innerHTML = "<tr style='background:#1e293b; color:#94a3b8;'>" +
+            "<th style='padding:5px 6px; text-align:right;'>#</th>" +
+            "<th style='padding:5px 6px; text-align:left;'>Airline</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>Grow</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>Contribution</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>Contr./day</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>Flights</th>" +
+            "<th style='padding:5px 6px; text-align:right;'>c/f</th></tr>";
+    }
+}
+
+function am4AllyRenderTable(rows, mode, days, threshold) {
+    am4AllyWeekReport = rows || [];
+    am4AllyReportMode = mode;
+    am4AllySetTableHead(mode);
+    var tb = document.querySelector('#am4AllyTable tbody');
+    if (!tb) return;
+    tb.innerHTML = '';
+    var thr = threshold != null ? threshold : (Number(AM4_CONFIG.allianceReportThreshold) || 25000);
+    rows.forEach(function (r, idx) {
+        var tr = document.createElement('tr');
+        var dayBg = '';
+        if (!(r.isNew && r.contrib == null && mode === 'period') && r.perDay != null && isFinite(r.perDay)) {
+            dayBg = r.perDay >= thr
+                ? 'background:#14532d;color:#bbf7d0;font-weight:bold;'
+                : 'background:#7f1d1d;color:#fecaca;font-weight:bold;';
+        }
+        var growTxt = r.grow === 'NEW' ? 'NEW'
+            : (r.grow == null || !isFinite(r.grow) ? 'N/A'
+                : (Math.round(r.grow * 100) / 100).toLocaleString('en-US', {
+                    minimumFractionDigits: 2, maximumFractionDigits: 2
+                }));
+        if (mode === 'live') {
+            tr.innerHTML =
+                '<td>' + (idx + 1) + '</td>' +
+                '<td style="text-align:left;">' + am4AllyEsc(r.name) + '</td>' +
+                '<td>' + am4AllyEsc(growTxt) + '</td>' +
+                '<td style="' + dayBg + '">' + am4AllyFmt(r.perDay) + '</td>' +
+                '<td>' + (r.cf == null ? '—' : am4AllyFmt(r.cf)) + '</td>' +
+                '<td>' + am4AllyFmt(r.season) + '</td>';
+        } else if (r.isNew && r.contrib == null) {
+            tr.innerHTML = '<td>' + (idx + 1) + '</td><td style="text-align:left;">' + am4AllyEsc(r.name) +
+                '</td><td style="color:#fbbf24;">NEW</td><td style="color:#fbbf24;">NEW</td>' +
+                '<td style="color:#fbbf24;">NEW</td><td style="color:#fbbf24;">NEW</td>' +
+                '<td style="color:#fbbf24;">NEW</td>';
+        } else {
+            tr.innerHTML =
+                '<td>' + (idx + 1) + '</td>' +
+                '<td style="text-align:left;">' + am4AllyEsc(r.name) + '</td>' +
+                '<td>' + am4AllyEsc(growTxt) + '</td>' +
+                '<td>' + am4AllyFmt(r.contrib) + '</td>' +
+                '<td style="' + dayBg + '">' + am4AllyFmt(r.perDay) + '</td>' +
+                '<td>' + am4AllyFmt(r.flights) + '</td>' +
+                '<td>' + (r.cf == null ? '—' : am4AllyFmt(r.cf)) + '</td>';
+        }
+        tb.appendChild(tr);
+    });
+    var sum = document.getElementById('am4AllySummary');
+    if (sum) {
+        if (mode === 'live') {
+            sum.textContent = rows.length + ' members · Live snapshot · game Contr./day + Season · c/f = floor((lifetime×1000)/flights) · green ≥ ' +
+                Number(thr).toLocaleString('en-US');
+        } else {
+            sum.textContent = rows.length + ' members · Weekly delta · ' + days + '-day · contrib/flights = end−start · c/f = floor((contrib×1000)/flights) · green ≥ ' +
+                Number(thr).toLocaleString('en-US');
+        }
+    }
+}
+
+function am4AllyScanLive() {
+    am4AllyWeekSetMsg('Reading alliance.php…', '#38bdf8');
+    return am4AllianceFetchMembers().then(function (list) {
+        am4AllyWeekLive = list || [];
+        am4AllyWeekMeta();
+        try { am4RefreshAllianceMetrics(); } catch (e) { /* ignore */ }
+        return am4AllyWeekLive;
+    }).catch(function (e) {
+        am4AllyWeekSetMsg('Alliance read failed: ' + String(e && e.message || e), '#ef4444');
+        return [];
+    });
+}
+
+function am4AllySaveWeekStart() {
+    am4AllyScanLive().then(function (list) {
+        if (!list.length) return;
+        am4AllySaveJson(AM4_ALLY_WEEK_START_KEY, {
+            at: Date.now(),
+            rows: list.map(function (r) {
+                return {
+                    id: r.id, name: r.name, key: r.key,
+                    lifetime: r.lifetime, flights: r.flights,
+                    perDay: r.perDay, season: r.season
+                };
+            })
+        });
+        am4AllyWeekMeta();
+        am4AllyWeekSetMsg('Week START snapshot saved (' + list.length + ' members). At week end: Build period report.', '#10b981');
+        if (typeof am4LogAction === 'function') {
+            am4LogAction('ops', '🤝 Alliance week-start snapshot saved (' + list.length + ')');
+        }
+    });
+}
+
+function am4AllySyncHelp() {
+    var mode = am4AllyGetMode();
+    var help = document.getElementById('am4AllyHelp');
+    var daysLab = document.getElementById('am4AllyDaysWrap');
+    var saveStart = document.getElementById('am4AllySaveStart');
+    if (daysLab) daysLab.style.display = mode === 'period' ? '' : 'none';
+    if (saveStart) saveStart.style.display = mode === 'period' ? '' : 'none';
+    if (help) {
+        if (mode === 'live') {
+            help.innerHTML = '<b>Live snapshot</b>: reads game <b>Contr./day</b> + <b>Season</b> now. c/f = floor((lifetime×1000)/flights). Grow vs last saved Season.';
+        } else {
+            help.innerHTML = '<b>Weekly delta</b>: Save week START, then Build later. Contribution/Flights = lifetime end − start. Contr./day = contrib ÷ days. c/f = floor((contrib×1000)/flights).';
+        }
+    }
+    am4AllyWeekMeta();
+}
+
+function am4AllyBuildWeeklyReport() {
+    var mode = am4AllyGetMode();
+    var days = Math.max(1, parseInt((document.getElementById('am4AllyDays') || {}).value, 10) ||
+        Number(AM4_CONFIG.allianceReportDays) || 7);
+    var thr = Math.max(0, parseFloat((document.getElementById('am4AllyThr') || {}).value) ||
+        Number(AM4_CONFIG.allianceReportThreshold) || 0);
+    AM4_CONFIG.allianceReportDays = days;
+    AM4_CONFIG.allianceReportThreshold = thr;
+    AM4_CONFIG.allianceReportMode = mode;
+    try { if (typeof saveAm4Config === 'function') saveAm4Config(); } catch (e0) { /* ignore */ }
+    am4AllySyncHelp();
+
+    am4AllyWeekSetMsg('Fetching alliance.php…', '#38bdf8');
+    am4AllyScanLive().then(function (list) {
+        if (!list.length) return;
+        var prev = am4AllyLoadJson(am4AllyPrevKey(mode));
+        if (mode === 'live') {
+            var liveRows = am4AllyBuildLiveRows(list, prev);
+            am4AllyRenderTable(liveRows, 'live', days, thr);
+            am4AllyWeekSetMsg('Live report ready — ' + liveRows.length + ' members.', '#10b981');
+            if (typeof am4LogAction === 'function') {
+                am4LogAction('ops', '🤝 Alliance LIVE report (' + liveRows.length + ')');
+            }
+            return;
+        }
+        var start = am4AllyLoadJson(AM4_ALLY_WEEK_START_KEY);
+        if (!start || !Array.isArray(start.rows) || !start.rows.length) {
+            am4AllyWeekSetMsg('Period mode needs a week-start snapshot. Click “Save week START” first.', '#f59e0b');
+            return;
+        }
+        var periodRows = am4AllyBuildPeriodRows(start.rows, list, days, prev);
+        am4AllyRenderTable(periodRows, 'period', days, thr);
+        am4AllyWeekSetMsg('Period report ready — ' + periodRows.length + ' members · ' + days + '-day · start ' +
+            new Date(start.at).toLocaleString() + '.', '#10b981');
+        if (typeof am4LogAction === 'function') {
+            am4LogAction('ops', '🤝 Alliance PERIOD report (' + periodRows.length + ', ' + days + '-day)');
+        }
+    });
+}
+
+function am4AllySaveAsPrevious() {
+    if (!am4AllyWeekReport.length) {
+        am4AllyWeekSetMsg('Build a report first, then save it as Grow baseline.', '#f59e0b');
+        return;
+    }
+    var mode = am4AllyReportMode || am4AllyGetMode();
+    am4AllySaveJson(am4AllyPrevKey(mode), {
+        at: Date.now(),
+        mode: mode,
+        rows: am4AllyWeekReport.filter(function (r) {
+            return !(mode === 'period' && r.isNew && r.contrib == null);
+        }).map(function (r) {
+            return {
+                name: r.name, key: r.key,
+                contrib: r.contrib, season: r.season,
+                perDay: r.perDay, cf: r.cf, flights: r.flights
+            };
+        })
+    });
+    am4AllyWeekMeta();
+    am4AllyWeekSetMsg('Saved as previous week for ' + mode + ' mode (Grow baseline).', '#10b981');
+}
+
+function am4AllyExportCsv() {
+    if (!am4AllyWeekReport.length) {
+        am4AllyWeekSetMsg('Nothing to export — build the report first.', '#f59e0b');
+        return;
+    }
+    var mode = am4AllyReportMode || am4AllyGetMode();
+    var lines = mode === 'live'
+        ? ['#,Airline,Grow,Contr./day,c/f,Season']
+        : ['#,Airline,Grow,Contribution,Contr./day,Flights,c/f'];
+    am4AllyWeekReport.forEach(function (r, i) {
+        if (mode === 'live') {
+            lines.push([
+                i + 1, '"' + String(r.name).replace(/"/g, '""') + '"',
+                r.grow === 'NEW' ? 'NEW' : (r.grow == null || !isFinite(r.grow) ? 'N/A' : r.grow),
+                r.perDay, r.cf == null ? '' : r.cf, r.season
+            ].join(','));
+        } else if (r.isNew && r.contrib == null) {
+            lines.push([i + 1, '"' + String(r.name).replace(/"/g, '""') + '"', 'NEW', 'NEW', 'NEW', 'NEW', 'NEW'].join(','));
+        } else {
+            lines.push([
+                i + 1, '"' + String(r.name).replace(/"/g, '""') + '"',
+                r.grow === 'NEW' ? 'NEW' : (r.grow == null || !isFinite(r.grow) ? 'N/A' : r.grow),
+                r.contrib, r.perDay == null ? '' : Math.round(r.perDay),
+                r.flights, r.cf == null ? '' : r.cf
+            ].join(','));
+        }
+    });
+    var blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'am4-alliance-' + mode + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    am4AllyWeekSetMsg('CSV downloaded.', '#10b981');
+}
+
+function am4AllyCopyTsv() {
+    if (!am4AllyWeekReport.length) {
+        am4AllyWeekSetMsg('Nothing to copy — build the report first.', '#f59e0b');
+        return;
+    }
+    var mode = am4AllyReportMode || am4AllyGetMode();
+    var tsv = mode === 'live'
+        ? ['#\tAirline\tGrow\tContr./day\tc/f\tSeason']
+        : ['#\tAirline\tGrow\tContribution\tContr./day\tFlights\tc/f'];
+    am4AllyWeekReport.forEach(function (r, i) {
+        if (mode === 'live') {
+            tsv.push([
+                i + 1, r.name,
+                r.grow === 'NEW' ? 'NEW' : (r.grow == null || !isFinite(r.grow) ? 'N/A' : r.grow),
+                r.perDay, r.cf == null ? '' : r.cf, r.season
+            ].join('\t'));
+        } else if (r.isNew && r.contrib == null) {
+            tsv.push([i + 1, r.name, 'NEW', 'NEW', 'NEW', 'NEW', 'NEW'].join('\t'));
+        } else {
+            tsv.push([
+                i + 1, r.name,
+                r.grow === 'NEW' ? 'NEW' : (r.grow == null || !isFinite(r.grow) ? 'N/A' : r.grow),
+                r.contrib, r.perDay == null ? '' : Math.round(r.perDay),
+                r.flights, r.cf == null ? '' : r.cf
+            ].join('\t'));
+        }
+    });
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(tsv.join('\n')).then(function () {
+            am4AllyWeekSetMsg('Copied — paste into Sheets/Excel.', '#10b981');
+        }).catch(function () { am4AllyWeekSetMsg('Clipboard blocked — use Export CSV.', '#f59e0b'); });
+    } else {
+        am4AllyWeekSetMsg('Clipboard unavailable — use Export CSV.', '#f59e0b');
+    }
+}
+
+function am4AllyInjectButton() {
+    var bar = document.getElementById('am4ControlBar');
+    if (!bar || document.getElementById('am4AllyBtn')) return;
+    var btn = document.createElement('span');
+    btn.id = 'am4AllyBtn';
+    btn.title = 'Alliance weekly report — Weekly delta or Live snapshot';
+    btn.style.cssText = 'cursor:pointer; color:#34d399; font-size:13px; line-height:1; padding:2px 6px; border-radius:4px; user-select:none; font-family:monospace; white-space:nowrap;';
+    btn.innerText = '🤝 Alliance';
+    var fleet = document.getElementById('am4FleetBtn');
+    if (fleet && fleet.parentElement === bar) bar.insertBefore(btn, fleet);
+    else {
+        var gear = document.getElementById('am4SettingsBtn');
+        if (gear && gear.parentElement === bar) bar.insertBefore(btn, gear);
+        else bar.appendChild(btn);
+    }
+    btn.addEventListener('mouseenter', function () { btn.style.background = 'rgba(52,211,153,0.15)'; });
+    btn.addEventListener('mouseleave', function () { btn.style.background = ''; });
+    btn.addEventListener('click', am4AllyTogglePanel);
+}
+
+function am4AllyTogglePanel() {
+    var p = document.getElementById('am4AllyPanel');
+    if (p && p.style.display === 'block') { p.style.display = 'none'; return; }
+    am4AllyBuildPanel().style.display = 'block';
+    am4AllyBuildWeeklyReport();
+}
+
+function am4AllyBuildPanel() {
+    var old = document.getElementById('am4AllyPanel');
+    if (old) old.remove();
+    var days = Number(AM4_CONFIG.allianceReportDays) || 7;
+    var thr = Number(AM4_CONFIG.allianceReportThreshold) || 25000;
+    var mode = AM4_CONFIG.allianceReportMode === 'live' ? 'live' : 'period';
+    var panel = document.createElement('div');
+    panel.id = 'am4AllyPanel';
+    panel.style.cssText = 'position:fixed; top:56px; left:20px; width:min(720px, calc(100vw - 24px)); max-height:86vh; overflow-y:auto; background:rgba(15,19,26,0.98); border:1px solid #34495e; border-radius:8px; color:#e2e8f0; font-family:monospace; font-size:12px; z-index:1041; padding:14px; box-shadow:0 6px 24px rgba(0,0,0,0.6); display:none;';
+    panel.innerHTML =
+        "<div style='display:flex; margin-bottom:6px;'><span style='flex-grow:1; font-size:13px; font-weight:bold; color:#34d399; letter-spacing:1px;'>🤝 ALLIANCE WEEKLY REPORT</span>" +
+        "<span id='am4AllyRefresh' title='Re-read + rebuild' style='cursor:pointer; color:#38bdf8; padding:0 6px;'>⟳</span>" +
+        "<span id='am4AllyClose' style='cursor:pointer; color:#ef4444; font-weight:bold; padding:0 4px;'>[X]</span></div>" +
+        "<div id='am4AllyHelp' style='font-size:10px; color:#94a3b8; line-height:1.45; margin-bottom:8px;'></div>" +
+        "<div style='display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:6px 0;'>" +
+        "<label style='color:#94a3b8;'>Mode <select id='am4AllyMode' style='background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px;'>" +
+        "<option value='period'" + (mode === 'period' ? ' selected' : '') + ">Weekly delta</option>" +
+        "<option value='live'" + (mode === 'live' ? ' selected' : '') + ">Live snapshot</option>" +
+        "</select></label>" +
+        "<label id='am4AllyDaysWrap' style='color:#94a3b8;'>Days <input id='am4AllyDays' type='number' min='1' max='90' value='" + days + "' style='width:56px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px;'></label>" +
+        "<label style='color:#94a3b8;'>Green if Contr./day ≥ <input id='am4AllyThr' type='number' min='0' value='" + thr + "' style='width:88px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px;'></label>" +
+        "</div>" +
+        "<div style='display:flex; flex-wrap:wrap; gap:8px; margin:8px 0;'>" +
+        "<button id='am4AllySaveStart' style='cursor:pointer; border:none; border-radius:5px; padding:6px 10px; font-family:monospace; font-size:11px; font-weight:bold; background:#14532d; color:#bbf7d0;'>Save week START</button>" +
+        "<button id='am4AllyBuild' style='cursor:pointer; border:none; border-radius:5px; padding:6px 10px; font-family:monospace; font-size:11px; font-weight:bold; background:#1e3a5f; color:#7dd3fc;'>Build / refresh</button>" +
+        "<button id='am4AllySavePrev' style='cursor:pointer; border:none; border-radius:5px; padding:6px 10px; font-family:monospace; font-size:11px; font-weight:bold; background:#3b2f14; color:#fde68a;'>Save as previous (Grow)</button>" +
+        "<button id='am4AllyCsv' style='cursor:pointer; border:none; border-radius:5px; padding:6px 10px; font-family:monospace; font-size:11px; font-weight:bold; background:#334155; color:#e2e8f0;'>Export CSV</button>" +
+        "<button id='am4AllyCopy' style='cursor:pointer; border:none; border-radius:5px; padding:6px 10px; font-family:monospace; font-size:11px; font-weight:bold; background:#334155; color:#e2e8f0;'>Copy table</button>" +
+        "</div>" +
+        "<div id='am4AllyMeta' style='font-size:10px; color:#64748b; margin:4px 0;'></div>" +
+        "<div id='am4AllyMsg' style='font-size:11px; color:#38bdf8; margin:4px 0 8px; word-break:break-word;'></div>" +
+        "<div id='am4AllySummary' style='font-size:10px; color:#94a3b8; margin-bottom:6px;'></div>" +
+        "<div style='overflow:auto; max-height:58vh; border:1px solid #334155; border-radius:6px;'>" +
+        "<table id='am4AllyTable' style='width:100%; border-collapse:collapse; font-size:11px;'>" +
+        "<thead></thead><tbody></tbody></table></div>";
+    document.body.appendChild(panel);
+    document.getElementById('am4AllyClose').addEventListener('click', function () { panel.style.display = 'none'; });
+    document.getElementById('am4AllyRefresh').addEventListener('click', am4AllyBuildWeeklyReport);
+    document.getElementById('am4AllyMode').addEventListener('change', function () {
+        AM4_CONFIG.allianceReportMode = am4AllyGetMode();
+        try { if (typeof saveAm4Config === 'function') saveAm4Config(); } catch (e) { /* ignore */ }
+        am4AllySyncHelp();
+        am4AllyBuildWeeklyReport();
+    });
+    document.getElementById('am4AllySaveStart').addEventListener('click', am4AllySaveWeekStart);
+    document.getElementById('am4AllyBuild').addEventListener('click', am4AllyBuildWeeklyReport);
+    document.getElementById('am4AllySavePrev').addEventListener('click', am4AllySaveAsPrevious);
+    document.getElementById('am4AllyCsv').addEventListener('click', am4AllyExportCsv);
+    document.getElementById('am4AllyCopy').addEventListener('click', am4AllyCopyTsv);
+    if (typeof am4PanelChrome === 'function') am4PanelChrome(panel, 'alliance');
+    am4AllySetTableHead(mode);
+    am4AllySyncHelp();
+    if (am4AllyWeekReport.length) {
+        am4AllyRenderTable(am4AllyWeekReport, am4AllyReportMode || mode, days, thr);
+    }
+    return panel;
 }
 
 //================================================================================
@@ -5266,6 +5977,128 @@ var AM4_AIRCRAFT_PROFILES_KEY = 'am4MasterSuiteAircraftProfiles';
 var AM4_STRAT_N_MIN = 1;
 var AM4_STRAT_N_MAX = 24;
 var AM4_STRAT_PRESETS = [2, 3, 4];
+var AM4_CHARTER_DEFAULT_N = 10; // charter routes typically run up to ~10 deps / aircraft / day
+
+function am4IsRealism() {
+    return String((AM4_CONFIG && AM4_CONFIG.gameMode) || 'easy').toLowerCase() === 'realism';
+}
+function am4IsCharter() {
+    return String((AM4_CONFIG && AM4_CONFIG.aircraftService) || 'scheduled').toLowerCase() === 'charter';
+}
+/** First-class control exists and can actually be edited (scheduled). Hidden/disabled/max0 = charter. */
+function am4FleetFirstSeatUsable(box, html) {
+    var root = box;
+    if (!root && html) {
+        try {
+            root = document.createElement('div');
+            root.innerHTML = String(html || '');
+        } catch (e) { root = null; }
+    }
+    if (!root || !root.querySelector) return false;
+    var fEl = root.querySelector('#fSeat, input[name="fSeat"], #firstSeat');
+    if (!fEl) return false;
+    if (String(fEl.type || '').toLowerCase() === 'hidden') return false;
+    if (fEl.disabled || fEl.readOnly) return false;
+    var max = parseInt(fEl.getAttribute('max') || fEl.max, 10);
+    if (isFinite(max) && max <= 0) return false;
+    var node = fEl;
+    for (var i = 0; i < 5 && node; i++) {
+        var cn = String(node.className || '');
+        var st = String((node.getAttribute && node.getAttribute('style')) || '');
+        if (/\bd-none\b|\bhidden\b|display\s*:\s*none|visibility\s*:\s*hidden/i.test(cn + ' ' + st)) return false;
+        node = node.parentElement;
+    }
+    return true;
+}
+/** True when this plane/panel is Eco+Business only (no First) — suite Charter, panel, or F=0 Y+J config. */
+function am4FleetPaxIsCharterLayout(info, plane, html) {
+    if (info && info.cargo) return false;
+    if (plane && typeof am4FleetRowLooksCargo === 'function' && am4FleetRowLooksCargo(plane)) return false;
+    if (typeof am4IsCharter === 'function' && am4IsCharter()) return true;
+    if (info && info.charter) return true;
+    var y = Number((info && info.curE != null) ? info.curE : (plane && plane.y)) || 0;
+    var j = Number((info && info.curB != null) ? info.curB : (plane && plane.j)) || 0;
+    var f = Number((info && info.curF != null) ? info.curF : (plane && plane.f)) || 0;
+    // Live charter seating: Economy + Business installed, First stays 0 (B787-10 etc.).
+    if (y > 0 && j > 0 && f === 0) return true;
+    var blob = String(html || (info && info.rawHtml) || '');
+    if (blob || (info && info._modBox)) {
+        var box = (info && info._modBox) || null;
+        if (!box && blob) {
+            try {
+                box = document.createElement('div');
+                box.innerHTML = typeof am4FleetStripModifyScripts === 'function'
+                    ? am4FleetStripModifyScripts(blob) : blob;
+            } catch (eBox) { box = null; }
+        }
+        var isCargoHtml = /modType\s*=\s*['"]?cargo|cargoSlider|Large\s*load|sumLargeLoad|Heavy\s*load/i.test(blob);
+        if (!isCargoHtml) {
+            var hasE = box
+                ? !!box.querySelector('#eSeat, input[name="eSeat"], #ecoSeat')
+                : /(?:id|name)=["']eSeat["']|#eSeat\b/i.test(blob);
+            var hasB = box
+                ? !!box.querySelector('#bSeat, input[name="bSeat"], #busSeat')
+                : /(?:id|name)=["']bSeat["']|#bSeat\b/i.test(blob);
+            var fUsable = typeof am4FleetFirstSeatUsable === 'function'
+                ? am4FleetFirstSeatUsable(box, blob) : /(?:id|name)=["']fSeat["']|#fSeat\b/i.test(blob);
+            if (hasE && hasB && !fUsable) return true;
+        }
+    }
+    return false;
+}
+function am4FleetApplyCharterModUi(charterUi) {
+    var seatLabel = document.getElementById('am4ModSeatLabel');
+    if (seatLabel && !/Large|Heavy/i.test(seatLabel.innerText || '')) {
+        seatLabel.innerText = charterUi ? 'Seats Y / J' : 'Seats Y / J / F';
+    }
+    var fInput = document.getElementById('am4ModF');
+    if (fInput) {
+        fInput.style.display = charterUi ? 'none' : '';
+        if (charterUi) fInput.value = '0';
+    }
+}
+function am4CharterQs() {
+    return am4IsCharter() ? 'charter=1' : 'charter=0';
+}
+function am4CharterFlagValue() {
+    return am4IsCharter() ? '1' : '0';
+}
+/** Scheduled pax needs Y+J+F; charter needs Y+J only (F stays 0). */
+function am4PaxNeedsFirst() {
+    return !am4IsCharter();
+}
+function am4PaxIsRoutable(y, j, f) {
+    y = Math.max(0, parseInt(y, 10) || 0);
+    j = Math.max(0, parseInt(j, 10) || 0);
+    f = Math.max(0, parseInt(f, 10) || 0);
+    if (am4IsCharter()) return y > 0 && j > 0;
+    return y > 0 && j > 0 && f > 0;
+}
+function am4PaxSeatOrder(cfg) {
+    if (am4IsCharter()) {
+        return (cfg && cfg.seatStrategy === 'revenue') ? ['j', 'y'] : ['y', 'j'];
+    }
+    return (cfg && cfg.seatStrategy === 'economy-first') ? ['y', 'j', 'f'] : ['f', 'j', 'y'];
+}
+function am4PaxFillTopOrder(cfg) {
+    if (am4IsCharter()) {
+        return (cfg && cfg.seatStrategy === 'revenue') ? ['j', 'y'] : ['y', 'j'];
+    }
+    return (cfg && cfg.seatStrategy === 'economy-first') ? ['y', 'j', 'f'] : ['f', 'j', 'y'];
+}
+/** When enabling charter, nudge Strategy N toward 10×/24h if still on a long-haul default. */
+function am4CharterEnsureStrategyN() {
+    if (!am4IsCharter() || typeof am4StratLoadCfg !== 'function') return;
+    try {
+        var cfg = am4StratLoadCfg();
+        if (!cfg || (cfg.n !== 2 && cfg.n !== 3 && cfg.n !== 4)) return;
+        cfg.n = AM4_CHARTER_DEFAULT_N;
+        am4StratSaveCfg(cfg);
+        if (typeof am4LogAction === 'function') {
+            am4LogAction('strategy', '🎯 Charter mode: Strategy set to ' + AM4_CHARTER_DEFAULT_N + '×/24h (typical charter frequency)');
+        }
+    } catch (e) { /* ignore */ }
+}
 
 function am4AircraftDefault() {
     return {
@@ -5522,7 +6355,9 @@ function am4AircraftMerge(base, extra) {
 
 function am4AircraftLooksFreighter(name) {
     name = String(name || '');
-    return /freighter|cargo\s*plane|\bBCF\b|\bSF\b|-\d+F\b|-\d+F$|-800F|-400F|-200F|-300F/i.test(name);
+    // Require a real freighter token — never treat "B787-10" / pax types as cargo.
+    return /freighter|cargo\s*plane|\bBCF\b|\bP2F\b|\b\d{2,3}F\b|-\d{2,4}F\b|-800F|-400F|-200F|-300F/i.test(name) &&
+        !/\b787-10\b|\b787-9\b|\b787-8\b/i.test(name);
 }
 
 function am4AircraftSanitizeCargo(p) {
@@ -5838,7 +6673,7 @@ function am4AircraftPrefetchOwnedProfiles() {
             setTimeout(step, 40);
             return;
         }
-        fetch('ac_orders.php?mode=detail&id=' + t.id + '&charter=0', { credentials: 'include'})
+        fetch('ac_orders.php?mode=detail&id=' + t.id + '&' + am4CharterQs(), { credentials: 'include'})
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 if (html) {
@@ -6051,7 +6886,7 @@ function am4AircraftEnsureFastestEngine(typeId) {
         ? am4AircraftSelectType(typeId)
         : Promise.resolve(am4AircraftProfile());
     return switchType.then(function () {
-        return fetch('ac_orders.php?mode=detail&id=' + typeId + '&charter=0', { credentials: 'include' })
+        return fetch('ac_orders.php?mode=detail&id=' + typeId + '&' + am4CharterQs(), { credentials: 'include' })
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 if (am4AircraftTypeId() === typeId) am4AircraftApplyOrderPage(html, typeId);
@@ -6095,7 +6930,7 @@ function am4AircraftSelectEngine(engineId, onDone) {
     if (hit && hit.range > 0) patch.rangeKm = hit.range;
     am4AircraftSet(patch);
     if (typeof am4FleetFillEngineSelect === 'function') am4FleetFillEngineSelect();
-    var url = 'ac_orders.php?mode=detail&id=' + typeId + '&charter=0' + (engineId ? ('&engine=' + engineId) : '');
+    var url = 'ac_orders.php?mode=detail&id=' + typeId + '&' + am4CharterQs() + (engineId ? ('&engine=' + engineId) : '');
     return fetch(url, { credentials: 'include' })
         .then(function (r) { return r.text(); })
         .then(function (html) {
@@ -6400,7 +7235,11 @@ function am4AircraftSelectType(typeId, onDone) {
         ? stored
         : ((typeId === 2) ? am4AircraftDefault() : am4AircraftBlank(typeId, known && known.name));
     if (known && am4AircraftLooksLikeModelName(known.name, true)) next.name = known.name;
-    if (known && known.name && !am4AircraftLooksFreighter(known.name) && ((next.seats || 0) > 0 || (next.cargoKg || 0) <= 0)) {
+    if (am4AircraftLooksFreighter(next.name) || (known && am4AircraftLooksFreighter(known.name))) {
+        next.cargo = true;
+    } else if (known && known.name && !am4AircraftLooksFreighter(known.name) &&
+        !am4AircraftLooksFreighter(next.name) &&
+        ((next.seats || 0) > 0 || (next.cargoKg || 0) <= 0)) {
         next.cargo = false;
         next.cargoKg = 0;
         next.cargoAft = 0;
@@ -6415,7 +7254,7 @@ function am4AircraftSelectType(typeId, onDone) {
     }
     if (typeof am4FleetFillEngineSelect === 'function') am4FleetFillEngineSelect();
     if (typeof am4StrategyRender === 'function') am4StrategyRender();
-    return fetch('ac_orders.php?mode=detail&id=' + typeId + '&charter=0', { credentials: 'include'})
+    return fetch('ac_orders.php?mode=detail&id=' + typeId + '&' + am4CharterQs(), { credentials: 'include'})
         .then(function (r) { return r.text(); })
         .then(function (html) {
             if (am4AircraftTypeId() !== typeId) {
@@ -6500,14 +7339,17 @@ function am4StratOptionNs() {
 // Choose how many one-way FLIGHTS (legs) the selected aircraft does per 24 h.
 // More flights = more throughput per (expensive) plane, IF the distance lets that
 // many fit in 24 h AND the demand fills each. Flight time is VERIFIED from AM4's
-// own costIndex() JS (GAME_CONTRACTS): one-way time = dist / (cruiseKph × 1.5) at
-// cost index 200. So N legs fit iff dist ≤ 24·realSpeed/N; a plane does EXACTLY N
-// legs when its distance sits in the band ( 24·realSpeed/(N+1) , 24·realSpeed/N ].
-// The smallest N that still fits inside the type's range is max-range (A380 often 2×; MC-21 often 6×).
-//================================================================================
+// own costIndex() JS: one-way time = dist / (cruiseKph × speedMult) at cost index 200.
+// Easy uses ×1.5; Realism uses ×1.0 (true cruise). So N legs fit iff dist ≤ 24·realSpeed/N.
 var AM4_STRAT_KEY = 'am4StrategyCfg';
-var AM4_STRAT_REALSPEED_MULT = 1.5; // AM4's own multiplier (verified from the game's costIndex JS)
+var AM4_STRAT_REALSPEED_MULT_EASY = 1.5; // verified Easy costIndex multiplier
+var AM4_STRAT_REALSPEED_MULT_REALISM = 1.0; // Realism has no Easy speed boost
 
+function am4StratRealSpeedMult() {
+    return (typeof am4IsRealism === 'function' && am4IsRealism())
+        ? AM4_STRAT_REALSPEED_MULT_REALISM
+        : AM4_STRAT_REALSPEED_MULT_EASY;
+}
 function am4StratCruiseStock() { return am4AircraftProfile().cruiseStock; }
 function am4StratCruiseMod() { return am4AircraftProfile().cruiseMod; }
 function am4StratRangeKm() { return am4AircraftProfile().rangeKm; }
@@ -6525,7 +7367,7 @@ function am4StratLoadCfg() {
 }
 function am4StratSaveCfg(cfg) { try { localStorage.setItem(AM4_STRAT_KEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } }
 function am4StratCruiseKph(cfg) { return (cfg && cfg.modded === false) ? am4StratCruiseStock() : am4StratCruiseMod(); }
-function am4StratRealSpeed(cfg) { return am4StratCruiseKph(cfg) * AM4_STRAT_REALSPEED_MULT; }
+function am4StratRealSpeed(cfg) { return am4StratCruiseKph(cfg) * am4StratRealSpeedMult(); }
 function am4StratKphLabel(kph, suffix) {
     return (kph > 0) ? (Number(kph).toLocaleString() + ' kph' + (suffix || '')) : 'unknown';
 }
@@ -6609,7 +7451,7 @@ function am4AircraftFetchCapacityFallback(typeId) {
     typeId = parseInt(typeId, 10) || am4AircraftTypeId();
     var prof = am4AircraftLoadProfile(typeId) || {};
     var eng = prof.engineId || am4AircraftEngineId() || 0;
-    var url = 'ac_orders.php?mode=detail&id=' + typeId + '&charter=0' + (eng ? ('&engine=' + eng) : '');
+    var url = 'ac_orders.php?mode=detail&id=' + typeId + '&' + am4CharterQs() + (eng ? ('&engine=' + eng) : '');
     return fetch(url, { credentials: 'include' }).then(function (r) { return r.text(); }).then(function (html) {
         var cap = am4AircraftParseCapacity(html, 0, false);
         return cap > 0 ? cap : 0;
@@ -6714,7 +7556,7 @@ var AM4_EXP_DEFAULT_CFG = {
     minRwy: 0,
     distCap: 14500,
     goodFillPct: 99,
-    throttleMs: 350, // delay between country requests (ban-safety)
+    throttleMs: 350, // delay between country requests
     expAggressiveScan: false, // turbo: parallel countries + throttle can go to 0
     expScanParallel: 2 // countries per batch when turbo (1–4)
 };
@@ -6842,7 +7684,9 @@ function am4ExpCacheKey(hubId, cfg) {
         '|' + (cfg.seatStrategy || '') +
         '|' + (cfg.cargoStrategy || '') +
         '|c' + (cfg.cargo ? ('g' + (cfg.cargoKg || 0) + 'w07v2lh' + (split.l || 0) + '-' + (split.h || 0)) : (cfg.seats || 0)) +
-        '|t' + (cfg.typeId || (typeof am4AircraftTypeId === 'function' ? am4AircraftTypeId() : 0));
+        '|t' + (cfg.typeId || (typeof am4AircraftTypeId === 'function' ? am4AircraftTypeId() : 0)) +
+        '|m' + ((typeof AM4_CONFIG !== 'undefined' && AM4_CONFIG.gameMode) || 'easy') +
+        '|svc' + ((typeof AM4_CONFIG !== 'undefined' && AM4_CONFIG.aircraftService) || 'scheduled');
 }
 function am4ExpCacheUsable(entry, cfg) {
     if (!entry || !entry.good) return false;
@@ -6890,10 +7734,11 @@ function am4ExpCeilText(cfg) {
     cfg = cfg || am4ExpLoadCfg();
     var cargo = !!cfg.cargo;
     var n = cfg.flightsPerDay || 2;
+    var modeLine = (am4IsRealism() ? 'Realism' : 'Easy') + ' · ' + (am4IsCharter() ? 'Charter (Y+J)' : 'Scheduled');
     if (cfg.bandPossible === false) {
-        return 'Strategy <b>' + n + ' flights/24 h</b> is beyond this type\'s range. Open &#127919; Strategy and pick the max-range N.';
+        return '<span style="color:#94a3b8;">' + modeLine + '</span> · Strategy <b>' + n + ' flights/24 h</b> is beyond this type\'s range. Open &#127919; Strategy and pick the max-range N.';
     }
-    return 'Strategy: <b>' + n + ' flights/24 h</b> &middot; routes <b>' + Number(cfg.bandLo).toLocaleString() +
+    return '<span style="color:#94a3b8;">' + modeLine + '</span> · Strategy: <b>' + n + ' flights/24 h</b> &middot; routes <b>' + Number(cfg.bandLo).toLocaleString() +
         '&ndash;' + Number(cfg.bandHi).toLocaleString() + ' km</b> &middot; cruise <b>' + Math.round(cfg.cruiseKph || 0) +
         ' kph</b>' + (cfg.realSpeed && cfg.realSpeed !== cfg.cruiseKph ? (' (real ' + Math.round(cfg.realSpeed) + ' kph)') : '') +
         ' &middot; demand per flight = demand&divide;' + n +
@@ -6987,9 +7832,24 @@ function am4ExpBuildFlownMap() {
 }
 
 // ---- Scoring ------------------------------------------------------------------
-function am4ExpPrices(d) { return { y: 0.4 * d + 170, j: 0.8 * d + 560, f: 1.2 * d + 1200 }; }
-// Per-kg cargo ticket formulas used by AM4 calculators (Large / Heavy).
+function am4ExpPrices(d) {
+    d = Number(d) || 0;
+    // Community-verified Auto formulas (am4help / abc8747): Easy vs Realism differ.
+    if (am4IsRealism()) {
+        return { y: 0.3 * d + 150, j: 0.6 * d + 500, f: 0.9 * d + 1000 };
+    }
+    return { y: 0.4 * d + 170, j: 0.8 * d + 560, f: 1.2 * d + 1200 };
+}
+// Per-kg cargo ticket formulas (Large / Heavy) — Easy vs Realism.
 function am4ExpCargoPrices(d) {
+    d = Number(d) || 0;
+    if (am4IsRealism()) {
+        return {
+            l: 0.0776321822039374 * d + 85.0567600367807,
+            h: 0.0517742799409248 * d + 24.6369915396414
+        };
+    }
+    // Easy — keep the suite's long-used per-kg constants (matched to Easy Auto).
     return {
         l: 0.0007763975155 * d + 0.1401945289,
         h: 0.0005175983437 * d + 0.0934782609
@@ -7341,6 +8201,98 @@ function am4PaxSeatMaxAt(y, j, f, cap) {
     };
 }
 
+/** Absolute minimum seats per required class for a "proper" suggestion (>10). */
+var AM4_PAX_MIN_CLASS_SEATS = 11;
+
+function am4PaxMinClassSeats(cap) {
+    var min = AM4_PAX_MIN_CLASS_SEATS;
+    cap = Math.max(0, parseInt(cap, 10) || 0);
+    var charter = (typeof am4IsCharter === 'function' && am4IsCharter());
+    // Need room for min in every required class (Y1 + J2 + F3 weights).
+    var needSlots = charter ? (min + 2 * min) : (min + 2 * min + 3 * min);
+    if (cap > 0 && cap < needSlots) {
+        // Tiny airframes: scale down so we don't invent impossible configs.
+        var classes = charter ? 2 : 3;
+        var per = Math.max(1, Math.floor(cap / (classes * 2)));
+        return Math.min(min, Math.max(1, per));
+    }
+    return min;
+}
+
+/** Thin = any required class below the >10 floor (or missing when others are packed). */
+function am4PaxSeatIsThinMix(s, cap) {
+    if (!s) return true;
+    var y = Math.max(0, parseInt(s.y, 10) || 0);
+    var j = Math.max(0, parseInt(s.j, 10) || 0);
+    var f = Math.max(0, parseInt(s.f, 10) || 0);
+    var floor = am4PaxMinClassSeats(cap);
+    if (typeof am4IsCharter === 'function' && am4IsCharter()) {
+        return y < floor || j < floor;
+    }
+    return y < floor || j < floor || f < floor;
+}
+
+/**
+ * Prefer ≥11 seats in every required class when capacity allows (steal from the fattest class).
+ * Does not invent First on charter. Returns a new seat object.
+ */
+function am4PaxSeatBoostThinClasses(s, cap, topOrder) {
+    var out = {
+        y: Math.max(0, parseInt(s && s.y, 10) || 0),
+        j: Math.max(0, parseInt(s && s.j, 10) || 0),
+        f: Math.max(0, parseInt(s && s.f, 10) || 0)
+    };
+    cap = Math.max(0, parseInt(cap, 10) || 0);
+    var floor = am4PaxMinClassSeats(cap);
+    var charter = (typeof am4IsCharter === 'function' && am4IsCharter());
+    if (charter) out.f = 0;
+    var keys = charter ? ['y', 'j'] : ['y', 'j', 'f'];
+    var donorOrder = (topOrder && topOrder.length) ? topOrder.slice().reverse() : (charter ? ['y', 'j'] : ['y', 'j', 'f']);
+    var guard = 0;
+    while (am4PaxSeatIsThinMix(out, cap) && guard++ < cap * 6) {
+        var thin = null;
+        var ti;
+        for (ti = 0; ti < keys.length; ti++) {
+            if (out[keys[ti]] < floor) { thin = keys[ti]; break; }
+        }
+        if (!thin) break;
+        var donor = null;
+        var di;
+        // Only steal when the donor stays ≥ floor after — never create a new thin class.
+        for (di = 0; di < donorOrder.length; di++) {
+            var d = donorOrder[di];
+            if (d === thin) continue;
+            if (charter && d === 'f') continue;
+            if (out[d] > floor) { donor = d; break; }
+        }
+        if (!donor) break;
+        out[donor]--;
+        out[thin]++;
+        while (am4PaxSeatSlots(out.y, out.j, out.f) > cap) {
+            var trimmed = false;
+            var ki;
+            for (ki = 0; ki < donorOrder.length; ki++) {
+                var dk = donorOrder[ki];
+                if (out[dk] > floor) { out[dk]--; trimmed = true; break; }
+            }
+            if (!trimmed) break;
+        }
+    }
+    if (charter) out.f = 0;
+    return out;
+}
+
+/** Drop thin (<11/class) suggestions when any proper mix exists; keep them only as last resort. */
+function am4ExpPreferBalancedSeatMix(good) {
+    if (!good || !good.length) return good || [];
+    var planeCap = (typeof am4AircraftSeats === 'function') ? (am4AircraftSeats() || 0) : 0;
+    var solid = good.filter(function (g) {
+        if (g.cargo) return true;
+        return !am4PaxSeatIsThinMix(g.cfg, planeCap);
+    });
+    return solid.length ? solid : good;
+}
+
 // After demand is packed, AM4 still allows raising classes until Y+2J+3F = capacity.
 // The order/modify form tops up (e.g. Y248/J50 demand → F84 to fill 600 slots).
 function am4PaxSeatFillPhysical(s, cap, topOrder) {
@@ -7352,12 +8304,27 @@ function am4PaxSeatFillPhysical(s, cap, topOrder) {
     };
     cap = Math.max(0, parseInt(cap, 10) || 0);
     topOrder = topOrder || ['f','j','y' ];
+    var floor = am4PaxMinClassSeats(cap);
+    // First lift any class below the >10 floor, then dump leftovers into topOrder.
+    var boostOrder = (typeof am4IsCharter === 'function' && am4IsCharter())
+        ? ['y', 'j']
+        : ['y', 'j', 'f'];
     var guard = 0;
     while (cap - am4PaxSeatSlots(s.y, s.j, s.f) > 0 && guard++ < cap * 3) {
         var left = cap - am4PaxSeatSlots(s.y, s.j, s.f);
         var maxAt = am4PaxSeatMaxAt(s.y, s.j, s.f, cap);
         var added = false;
         var i;
+        for (i = 0; i < boostOrder.length; i++) {
+            var bc = boostOrder[i];
+            if (s[bc] >= floor) continue;
+            if (W[bc] > left) continue;
+            if (s[bc] >= maxAt[bc]) continue;
+            s[bc]++;
+            added = true;
+            break;
+        }
+        if (added) continue;
         for (i = 0; i < topOrder.length; i++) {
             var c = topOrder[i];
             if (W[c] > left) continue;
@@ -7379,40 +8346,97 @@ function am4PaxSeatNormalize(y, j, f, cap, topOrder) {
     return s;
 }
 
-// Route creation requires Y>0 && J>0 && F>0. Premium-first packing can yield Y0/J77/F25
-// under capacity — rebalance by trimming the largest class before giving 1 to any zero class.
+// Route creation: scheduled needs Y>0 && J>0 && F>0; charter needs Y>0 && J>0 (F may be 0).
+// Prefer ≥11 seats per required class when capacity allows (never leave a class under the >10 floor if avoidable).
 function am4PaxSeatEnsureRoutable(y, j, f, cap, topOrder) {
     cap = Math.max(0, parseInt(cap, 10) || 0);
+    var charter = am4IsCharter();
+    var floor = am4PaxMinClassSeats(cap);
+    var inject = function (cur, cls) {
+        cur[cls] = Math.max(cur[cls] || 0, floor);
+    };
+    if (charter) {
+        // Never inject First on charter — game only offers Economy + Business.
+        topOrder = topOrder || ['y', 'j'];
+        topOrder = topOrder.filter(function (c) { return c === 'y' || c === 'j'; });
+        if (!topOrder.length) topOrder = ['y', 'j'];
+        var sc = am4PaxSeatNormalize(y, j, 0, cap, topOrder);
+        sc.f = 0;
+        if (sc.y > 0 && sc.j > 0) {
+            sc = am4PaxSeatBoostThinClasses(sc, cap, topOrder);
+            sc.f = 0;
+            return sc;
+        }
+        if (cap < 3) return sc;
+        var g = 0;
+        while ((sc.y <= 0 || sc.j <= 0) && g++ < cap * 4) {
+            if (sc.y <= 0) {
+                if (sc.j > floor) sc.j--;
+                else if (sc.j > 1) sc.j--;
+                else { inject(sc, 'y'); break; }
+                inject(sc, 'y');
+            } else if (sc.j <= 0) {
+                if (sc.y > floor) sc.y--;
+                else if (sc.y > 1) sc.y--;
+                else { inject(sc, 'j'); break; }
+                inject(sc, 'j');
+            }
+            while (am4PaxSeatSlots(sc.y, sc.j, 0) > cap) {
+                if (sc.y > floor) sc.y--;
+                else if (sc.j > floor) sc.j--;
+                else if (sc.y > 1) sc.y--;
+                else if (sc.j > 1) sc.j--;
+                else break;
+            }
+        }
+        sc.f = 0;
+        sc = am4PaxSeatBoostThinClasses(sc, cap, topOrder);
+        sc.f = 0;
+        if (sc.y > 0 && sc.j > 0) return sc;
+        return am4PaxSeatFillPhysical({ y: floor, j: floor, f: 0 }, cap, topOrder);
+    }
     var s = am4PaxSeatNormalize(y, j, f, cap, topOrder);
-    if (s.y > 0 && s.j > 0 && s.f > 0) return s;
+    if (s.y > 0 && s.j > 0 && s.f > 0) {
+        return am4PaxSeatBoostThinClasses(s, cap, topOrder);
+    }
     if (cap < 6) return s;
     var guard = 0;
     while ((s.y <= 0 || s.j <= 0 || s.f <= 0) && guard++ < cap * 4) {
         if (s.y <= 0) {
-            if (s.f > 1) s.f--;
+            if (s.f > floor) s.f--;
+            else if (s.j > floor) s.j--;
+            else if (s.f > 1) s.f--;
             else if (s.j > 1) s.j--;
-            else { s.y = 1; break; }
-            s.y = 1;
+            else { inject(s, 'y'); break; }
+            inject(s, 'y');
         } else if (s.j <= 0) {
-            if (s.f > 1) s.f--;
+            if (s.f > floor) s.f--;
+            else if (s.y > floor) s.y--;
+            else if (s.f > 1) s.f--;
             else if (s.y > 1) s.y--;
-            else { s.j = 1; break; }
-            s.j = 1;
+            else { inject(s, 'j'); break; }
+            inject(s, 'j');
         } else if (s.f <= 0) {
-            if (s.j > 1) s.j--;
+            if (s.j > floor) s.j--;
+            else if (s.y > floor) s.y--;
+            else if (s.j > 1) s.j--;
             else if (s.y > 1) s.y--;
-            else { s.f = 1; break; }
-            s.f = 1;
+            else { inject(s, 'f'); break; }
+            inject(s, 'f');
         }
         while (am4PaxSeatSlots(s.y, s.j, s.f) > cap) {
-            if (s.f > 1) s.f--;
+            if (s.f > floor) s.f--;
+            else if (s.j > floor) s.j--;
+            else if (s.y > floor) s.y--;
+            else if (s.f > 1) s.f--;
             else if (s.j > 1) s.j--;
             else if (s.y > 1) s.y--;
             else break;
         }
     }
+    s = am4PaxSeatBoostThinClasses(s, cap, topOrder);
     if (s.y > 0 && s.j > 0 && s.f > 0) return s;
-    return am4PaxSeatFillPhysical({ y: 1, j: 1, f: 1 }, cap, topOrder || ['f','j','y' ]);
+    return am4PaxSeatFillPhysical({ y: floor, j: floor, f: floor }, cap, topOrder || ['f','j','y' ]);
 }
 
 function am4ExpFill(order, caps, d, cfg) {
@@ -7420,8 +8444,14 @@ function am4ExpFill(order, caps, d, cfg) {
     // costs 3 economy slots, NOT 4. e.g. Y449 J30 F30 = 449 + 60 + 90 = 599 ≈ 600 (F=4 gave 629).
     var W = { y: 1, j: 2, f: 3 };
     var cap = cfg.seats;
+    var charter = am4IsCharter();
     var s = { y: 0, j: 0, f: 0 };
     var slots = cap;
+    if (charter) {
+        order = (order || []).filter(function (c) { return c === 'y' || c === 'j'; });
+        if (!order.length) order = am4PaxSeatOrder(cfg);
+        caps = { y: caps.y || 0, j: caps.j || 0, f: 0 };
+    }
     order.forEach(function (c) {
         var maxAt = am4PaxSeatMaxAt(s.y, s.j, s.f, cap);
         var take = Math.min(caps[c], maxAt[c], Math.floor(slots / W[c]));
@@ -7429,7 +8459,8 @@ function am4ExpFill(order, caps, d, cfg) {
         s[c] = take;
         slots -= take * W[c];
     });
-    var keys = ['y','j','f' ], changed = true;
+    var keys = charter ? ['y', 'j'] : ['y', 'j', 'f'];
+    var changed = true;
     while (slots > 0 && changed) {
         changed = false;
         for (var k = 0; k < keys.length; k++) {
@@ -7440,11 +8471,13 @@ function am4ExpFill(order, caps, d, cfg) {
             }
         }
     }
-    var topOrder = (cfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ];
+    var topOrder = am4PaxFillTopOrder(cfg);
     s = am4PaxSeatFillPhysical(s, cap, topOrder);
-    // Game route-create needs Y>0 && J>0 && F>0. Demand packing + fill-to-cap often
-    // leaves a class at 0 (shows as "Y600 J0 F0" / "0 seats" in one class) — force routable.
-    if (cap >= 6) s = am4PaxSeatEnsureRoutable(s.y, s.j, s.f, cap, topOrder);
+    if (charter) s.f = 0;
+    if (cap >= (charter ? 3 : 6)) s = am4PaxSeatEnsureRoutable(s.y, s.j, s.f, cap, topOrder);
+    if (charter) s.f = 0;
+    s = am4PaxSeatBoostThinClasses(s, cap, topOrder);
+    if (charter) s.f = 0;
     var p = am4ExpPrices(d);
     var used = am4PaxSeatSlots(s.y, s.j, s.f);
     return {
@@ -7519,7 +8552,7 @@ function am4ExpScoreRoutes(rows, flownSet, cfg, countSet) {
     // economy-first = Y→J→F (the user's real style). revenue = F→J→Y: with the corrected F=3
     // weight, revenue-per-slot is First (0.4d+400) > Business (0.4d+280) > Economy (0.4d+170).
     var cargo = !!cfg.cargo;
-    var order = (cfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ];
+    var order = am4PaxSeatOrder(cfg);
     var N = cfg.flightsPerDay || 2; // one-way FLIGHTS (legs) per 24 h — the chosen strategy
     var starFloor = cfg.bandLo + (cfg.bandHi - cfg.bandLo) * (2 / 3);
     var good = [];
@@ -7563,6 +8596,12 @@ function am4ExpScoreRoutes(rows, flownSet, cfg, countSet) {
         });
     });
     good.sort(function (a, b) { return (Number(b.preferred) - Number(a.preferred)) || (b.km - a.km) || (b.revPerDay - a.revPerDay); });
+    // Hide mixes with any class under 11 seats when a proper mix exists; keep thin only as last resort.
+    var beforeMix = good.length;
+    good = am4ExpPreferBalancedSeatMix(good);
+    if (beforeMix > good.length) {
+        stats.thinMixDrop = beforeMix - good.length;
+    }
     var builtN = good.filter(function (g) { return g.built; }).length;
     return { good: good, goodCount: good.length, built: builtN, remaining: good.length - builtN, stats: stats };
 }
@@ -7686,7 +8725,7 @@ function am4ExpScanOneHub(hub, countries, flownMap, cfg, runID, onCountry) {
         function fetchCountry(country) {
             var url = 'research_main.php?mode=search&rwy=' + cfg.minRwy + '&dist=' + cfg.distCap +
                 '&depId=' + encodeURIComponent(hub.id) + '&arr=' + encodeURIComponent(country) +
-                '&arrId=0&charter=0&_=' + Date.now();
+                '&arrId=0&' + am4CharterQs() + '&_=' + Date.now();
             return fetch(url, { credentials: 'include' })
                 .then(function (r) { return r.text(); })
                 .then(function (h) { rows = rows.concat(am4ExpParseRows(h)); })
@@ -7872,8 +8911,10 @@ function am4ExpScoringModeHTML(cfg) {
             "</select></div>");
     } else {
         h.push("<div class='am4-exp-row'><label>Seat strategy</label><select data-exp-key='seatStrategy'>" +
-            "<option value='revenue'" + (cfg.seatStrategy === 'revenue' ?' selected' : '') +">Revenue (J&rarr;Y&rarr;F)</option>" +
-            "<option value='economy-first'" + (cfg.seatStrategy === 'economy-first' ?' selected' : '') +">Economy-first (Y&rarr;J&rarr;F)</option>" +
+            "<option value='revenue'" + (cfg.seatStrategy === 'revenue' ?' selected' : '') +">" +
+            (am4IsCharter() ? 'Revenue (J&rarr;Y)' : 'Revenue (J&rarr;Y&rarr;F)') + "</option>" +
+            "<option value='economy-first'" + (cfg.seatStrategy === 'economy-first' ?' selected' : '') +">" +
+            (am4IsCharter() ? 'Economy-first (Y&rarr;J)' : 'Economy-first (Y&rarr;J&rarr;F)') + "</option>" +
             "</select></div>");
     }
     return h.join('');
@@ -7922,8 +8963,8 @@ function am4ExpBuildPanel() {
         "<input type='checkbox' id='am4ExpAggressiveScan'" + (cfg.expAggressiveScan ? " checked" : "") +
         "> Turbo scan</label></div>");
     h.push("<div class='am4-exp-row'><label>Parallel</label><input type='number' data-exp-key='expScanParallel' min='1' max='4' value='" +
-        (cfg.expScanParallel || 2) +"' style='width:52px;'><span style='font-size:9px;color:#fbbf24;margin-left:8px;'>⚠ Turbo = 0–50ms throttle + " +
-        (cfg.expScanParallel || 2) + " countries/batch — higher ban risk</span></div>");
+        (cfg.expScanParallel || 2) +"' style='width:52px;'><span style='font-size:9px;color:#94a3b8;margin-left:8px;'>Turbo = 0–50ms throttle + " +
+        (cfg.expScanParallel || 2) + " countries/batch</span></div>");
     h.push("<div style='font-size:9px; color:#64748b; margin:0 0 6px 0; line-height:1.4;'>Throttle = pause between each country batch during a scan (default 350 ms). Turbo lowers delay and fetches several countries at once. Distance band comes from Strategy above — not separate range boxes.</div>");
     h.push("<div class='am4-exp-row'><span style='font-size:10px;color:#64748b;' id='am4ExpCeil'>" + am4ExpCeilText(cfg) +"</span></div>");
     h.push("<div class='am4-exp-sec'>HUBS TO ANALYSE <span style='float:right;font-weight:normal;'>" +
@@ -8144,6 +9185,7 @@ function am4ExpReadCfgFromPanel() {
         if (isFinite(n)) cfg[key] = n;
     });
     am4ExpSaveCfg(cfg);
+    if (typeof am4RbUpdateTurboHint === 'function') am4RbUpdateTurboHint();
     return am4ExpLoadCfg(); // re-load so clamping is applied
 }
 
@@ -8339,7 +9381,9 @@ function am4ExpResultsHTML(results, cfg) {
     var cargoMode = !!cfg.cargo;
     var stratLabel = cargoMode
         ? ('Cargo L/H ' + ((cfg.cargoSplit && cfg.cargoSplit.l) || '?') + '/' + ((cfg.cargoSplit && cfg.cargoSplit.h) || '?'))
-        : ((cfg.seatStrategy === 'economy-first') ?'Economy-first (Y&rarr;J&rarr;F)' : 'Revenue-optimal (J&rarr;Y&rarr;F)');
+        : ((cfg.seatStrategy === 'economy-first')
+            ? (am4IsCharter() ? 'Economy-first (Y&rarr;J)' : 'Economy-first (Y&rarr;J&rarr;F)')
+            : (am4IsCharter() ? 'Revenue-optimal (J&rarr;Y)' : 'Revenue-optimal (J&rarr;Y&rarr;F)'));
     var when = new Date().toLocaleString();
     var stratN = cfg.flightsPerDay || 2;
 
@@ -8401,7 +9445,9 @@ function am4ExpResultsHTML(results, cfg) {
         "<h1>&#128269; AM4 Research Explorer</h1>",
         "<div class='sub'>Generated <b>" + am4ExpEsc(when) +"</b> &middot; Seats: <b>" + stratLabel +"</b> &middot; " +
             "Strategy <b>" + stratN +" flights/24h</b> &middot; band <b>" + am4ExpFmt(cfg.bandLo) +"&ndash;" + am4ExpFmt(cfg.bandHi) +" km</b> " +
-            "(" + am4ExpFmt(cfg.cruiseKph) +" kph &times;1.5 = " + am4ExpFmt(Math.round(cfg.realSpeed)) +" kph real) &middot; " +
+            "(" + am4ExpFmt(cfg.cruiseKph) +" kph &times;" +
+            ((typeof am4StratRealSpeedMult === 'function') ? am4StratRealSpeedMult() : 1.5) +
+            " = " + am4ExpFmt(Math.round(cfg.realSpeed)) +" kph real) &middot; " +
             "demand&divide;" + stratN +" per flight &middot; $/day = rev&times;" + stratN +" &middot; Min runway <b>" + am4ExpFmt(cfg.minRwy) +" ft</b> &middot; Fill &ge; <b>" + cfg.goodFillPct +"%</b></div>" ,
         "<div class='cards'>",
         "<div class='card'><div class='n'>" + hubs.length +"</div><div class='l'>Hubs analysed</div></div>" ,
@@ -8421,8 +9467,11 @@ function am4ExpResultsHTML(results, cfg) {
             " km</b> (so the plane does exactly <b>" + stratN +" flights/24h</b>), and the demand&divide;" + stratN +" seat split fills the " + cfg.seats +"-seat " + am4ExpEsc(am4AircraftName()) +" to &ge; " + cfg.goodFillPct +"%. " +
             "<b>&#9733; = the longest routes in the band</b> (top third by distance = greatest distance, highest ticket price) &mdash; those are sorted to the top and flagged; unstarred in-band routes are shorter and lower priority. " +
             "<b>Only airports meeting the min-runway filter are shown</b> &mdash; a hub&rsquo;s routes flown by other types (shorter runways) do not appear here. " +
-            "<b>Flights/24h = your chosen strategy N</b> (flight time/leg = dist&nbsp;/&nbsp;(" + am4ExpFmt(cfg.cruiseKph) +"&nbsp;kph&times;1.5); N legs fit iff dist &le; 24&times;realSpeed/N &mdash; AM4's own formula), and the daily demand is divided by N per flight. " +
-            "Seat weights Y=1 / J=2 / F=3; ticket price Y=0.4&times;km+170, J=0.8&times;km+560, F=1.2&times;km+1200. " +
+            "<b>Flights/24h = your chosen strategy N</b> (flight time/leg = dist&nbsp;/&nbsp;(" + am4ExpFmt(cfg.cruiseKph) +"&nbsp;kph&times;" +
+            ((typeof am4StratRealSpeedMult === 'function') ? am4StratRealSpeedMult() : 1.5) +
+            "); N legs fit iff dist &le; 24&times;realSpeed/N &mdash; AM4's own formula), and the daily demand is divided by N per flight. " +
+            "Seat weights Y=1 / J=2 / F=3" + (am4IsCharter() ? ' (charter: Y+J only)' : '') +
+            "; ticket formulas follow " + (am4IsRealism() ? 'Realism' : 'Easy') + " Autoprice. " +
             "<b>&quot;Built&quot;</b> is detected from the live map: a route counts as built when your airline already flies from this hub to that destination (highlighted green). " +
             "<b>&times;N</b> after &quot;built&quot; = how many " + am4ExpEsc(am4AircraftName()) +"s currently fly that exact route &mdash; counted from your live fleet (a 2nd plane on the same airport-pair is matched via its route name, e.g. <i>KSFO</i> + <i>KSFO-2</i>). " +
             (unresolvedPlanes > 0 ? "<b>Note:</b> " + unresolvedPlanes +" aircraft with no route-name could not be attributed to a specific route, so a doubled route flown by two <i>un-named</i> planes may show &times;1 instead of &times;2. " : "") +
@@ -8587,10 +9636,17 @@ function am4ExpBuildFromResults(arrId, hubName, cy, cj, cf, cargoFlag) {
     var cargo = !!(cargoFlag || (typeof am4AircraftIsCargo === 'function' && am4AircraftIsCargo()));
     var e = Number(cy) || 0, b = Number(cj) || 0, f = Number(cf) || 0;
     if (!cargo) {
-        if (e < 1) e = 1; if (b < 1) b = 1; if (f < 1) f = 1;
+        if (e < 1) e = 1; if (b < 1) b = 1;
+        if (typeof am4PaxNeedsFirst === 'function' && am4PaxNeedsFirst()) {
+            if (f < 1) f = 1;
+        } else {
+            f = 0;
+        }
         var cap = am4AircraftSeats();
         var expCfg = (typeof am4ExpLoadCfg === 'function') ? am4ExpLoadCfg() : {};
-        var topOrder = (expCfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ];
+        var topOrder = (typeof am4PaxFillTopOrder === 'function')
+            ? am4PaxFillTopOrder(expCfg)
+            : ((expCfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ]);
         var norm = am4PaxSeatEnsureRoutable(e, b, f, cap, topOrder);
         e = norm.y; b = norm.j; f = norm.f;
     }
@@ -8683,22 +9739,46 @@ function am4FleetParseSummary(html) {
     return types;
 }
 
-// Each A380 block in fleet.php?type=2 ends with a status token after"F class: N" .
-function am4FleetParseA380(html) {
+// Counts Routed/Parked/Maintenance for the selected type page.
+// Pax rows end with "F class: N <status>"; freighters use Large/Heavy — the old
+// F-class-only regex reported cargo fleets as 0 aircraft.
+function am4FleetParseTypeStatus(html) {
+    var s = { routed: 0, parked: 0, maintenance: 0, other: 0, total: 0 };
+    var rows = am4FleetParseA380Rows(html, null);
+    if (rows && rows.length) {
+        rows.forEach(function (p) {
+            s.total++;
+            var st = String(p.status || '').trim();
+            if (/^Routed/i.test(st)) s.routed++;
+            else if (/^Parked/i.test(st)) s.parked++;
+            else if (/Maintenance/i.test(st)) s.maintenance++;
+            else s.other++;
+        });
+        return s;
+    }
+    // Fallback when row markup is missing: accept pax OR cargo class labels.
     var b = document.createElement('div'); b.innerHTML = html;
     var text = (b.innerText || '').replace(/\s+/g,' ');
-    var s = { routed: 0, parked: 0, maintenance: 0, other: 0, total: 0 };
-    var re = /F class:\s*\d+\s*(Routed|Parked|Maintenance|In flight|Grounded|En route)?/g, m;
+    var re = /(?:F class|Y class|Large(?:\s+load)?|Heavy(?:\s+load)?|L class|H class)\s*:\s*[\d,]+\s*(Routed|Parked|Maintenance|In flight|Grounded|En route)?/gi;
+    var m, seen = 0;
     while ((m = re.exec(text)) !== null) {
-        s.total++;
+        // Freighter rows fire Large AND Heavy — count ~one status per pair.
         var st = (m[1] || '').trim();
+        if (!st && /Large/i.test(m[0])) continue;
+        s.total++;
+        seen++;
         if (st === 'Routed') s.routed++;
         else if (st === 'Parked') s.parked++;
         else if (st === 'Maintenance') s.maintenance++;
+        else if (st) s.other++;
         else s.other++;
+    }
+    if (seen && s.total > seen * 1.5) {
+        /* paired Large/Heavy may double-count; prefer row parser above when possible */
     }
     return s;
 }
+function am4FleetParseA380(html) { return am4FleetParseTypeStatus(html); }
 
 function am4FleetParseRoutesHeader(html) {
     var b = document.createElement('div'); b.innerHTML = html;
@@ -8710,7 +9790,7 @@ function am4FleetParseRoutesHeader(html) {
 // headroom (maxAcOrder) and the per-plane cost (defCost). Read-only.
 function am4FleetFetchOrderInfo() {
     var typeId = am4AircraftTypeId();
-    return fetch('ac_orders.php?mode=detail&id=' + typeId + '&charter=0', { credentials: 'include'})
+    return fetch('ac_orders.php?mode=detail&id=' + typeId + '&' + am4CharterQs(), { credentials: 'include'})
         .then(function (r) { return r.text(); })
         .then(function (html) {
             if (am4AircraftTypeId() === typeId) { am4AircraftApplyOrderPage(html, typeId); }
@@ -8793,7 +9873,7 @@ function am4FleetBuildPanel() {
         "<div class='am4-fleet-sec' style='color:#f59e0b; font-size:11px; font-weight:bold; letter-spacing:0.5px; border-top:1px dashed #334155; padding-top:6px;'>FLEET STATE (read-only)</div>" +
         "<div id='am4FleetState' style='margin:6px 0; line-height:1.7;'>reading fleet…</div>" +
         "<div class='am4-fleet-sec' style='color:#f59e0b; font-size:11px; font-weight:bold; letter-spacing:0.5px; border-top:1px dashed #334155; padding-top:6px; margin-top:8px;'>BUY AIRCRAFT</div>" +
-        "<div style='font-size:10px; color:#f87171; margin:5px 0; line-height:1.4;'>⚠ Spends in-game cash. Pick any type from your fleet or the shop. Treat your FIRST order of a new type as the test: after it, the fleet \"Pending\" count must rise by the amount you ordered.</div>" +
+        "<div style='font-size:10px; color:#94a3b8; margin:5px 0; line-height:1.4;'>Pick any type from your fleet or the shop. After ordering, the fleet Pending count should rise by the amount you ordered.</div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Aircraft</label><select id='am4FleetType' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'></select></div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Engine</label><select id='am4FleetEngine' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'></select></div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Hub</label><select id='am4FleetHub' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'><option>loading…</option></select></div>" +
@@ -8804,20 +9884,25 @@ function am4FleetBuildPanel() {
         "<button id='am4FleetBuy' style='cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:12px; font-weight:bold; background:#7f1d1d; color:#fecaca;'>Order (in-game cash)</button>" +
         "<button id='am4FleetBuyCargoMore' style='display:none; cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:11px; font-weight:bold; background:#1e3a5f; color:#7dd3fc;'>Auto-order cargo 1-by-1</button>" +
         "<span id='am4FleetBuyMsg' style='font-size:10px; color:#38bdf8; word-break:break-word; flex-grow:1;'></span></div>" +
-        "<div style='font-size:9px; color:#64748b; margin-top:8px; border-top:1px dashed #334155; padding-top:6px;'>Set seating / cargo holds before ordering — the game will not accept an empty config. Pax: Y/J/F (full economy is allowed). Cargo: Heavy aft/fwd + Large aft/fwd; cargo orders are 1 aircraft per send. After ~4 h delivery, CO₂ −10% / Speed +10% / Fuel −10% are applied automatically. Capped by \"Max aircraft per order\" and the fail-closed \"Aircraft order $ cap\" in ⚙ settings. Only the acting (lease-holding) tab can order.</div>" +
+        "<div style='font-size:9px; color:#64748b; margin-top:8px; border-top:1px dashed #334155; padding-top:6px;'>Set seating / cargo holds before ordering — the game will not accept an empty config. Pax: Y/J/F. Cargo: Heavy aft/fwd + Large aft/fwd; cargo orders are 1 aircraft per send. After ~4 h delivery, CO₂ −10% / Speed +10% / Fuel −10% are applied automatically. Caps: \"Max aircraft per order\" and \"Aircraft order $ cap\" in ⚙.</div>" +
         "<div id='am4FleetModHost' style='margin-top:10px;'></div>" +
         "<div id='am4FleetBuildHost' style='margin-top:10px;'></div>" +
         "<div class='am4-fleet-sec' style='color:#f59e0b; font-size:11px; font-weight:bold; letter-spacing:0.5px; border-top:1px dashed #334155; padding-top:6px; margin-top:8px;'>BUILD ROUTE · assign an aircraft at base</div>" +
-        "<div style='font-size:10px; color:#f87171; margin:5px 0; line-height:1.4;'>⚠ Spends a small route fee (~$1.5M). Pax: uses the plane's OWN seat config (all 3 classes must be &gt; 0). Freighters: uses Large/Heavy cargo prices (no Y/J/F seats). Pick an aircraft at base, press Check route, then Create.</div>" +
+        "<div style='font-size:10px; color:#94a3b8; margin:5px 0; line-height:1.4;'>Scheduled pax: all 3 classes &gt; 0. Charter: Economy + Business only. Freighters: Large/Heavy cargo prices. Pick an aircraft at base, press Check route, then Create.</div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Aircraft at base</label><select id='am4RtePlane' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'><option>loading…</option></select></div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Destination</label><select id='am4RteDest' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'><option value=''>pick a researched route</option></select></div>" +
         "<div id='am4RteDestNote' style='font-size:9px; color:#64748b; margin:0 0 4px 0; line-height:1.4;'></div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Route name</label><input id='am4RteReg' maxlength='10' style='width:150px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'></div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Cost index (0-200)</label><input type='number' id='am4RteCi' value='200' min='0' max='200' style='width:70px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace;'></div>" +
-        "<div class='am4-exp-btnrow' style='display:flex; gap:8px; margin-top:6px; align-items:center;'><button id='am4RteCheck' style='cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:12px; font-weight:bold; background:#334155; color:#e2e8f0;'>Check route</button></div>" +
+        "<div class='am4-exp-btnrow' style='display:flex; gap:8px; margin-top:6px; align-items:center; flex-wrap:wrap;'>" +
+        "<button id='am4RteCheck' style='cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:12px; font-weight:bold; background:#334155; color:#e2e8f0;'>Check route</button>" +
+        "<button id='am4RtePrepCreate' style='cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:12px; font-weight:bold; background:#1e3a5f; color:#7dd3fc;'>Prep &amp; create route</button>" +
+        "<button id='am4RtePrepCancel' style='display:none; cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:11px; font-weight:bold; background:#334155; color:#fca5a5;'>Clear prep queue</button>" +
+        "</div>" +
+        "<div id='am4RtePrepQueue' style='font-size:10px; color:#94a3b8; margin:6px 0; line-height:1.55;'></div>" +
         "<div id='am4RteInfo' style='font-size:11px; color:#cbd5e1; margin:6px 0; line-height:1.6;'></div>" +
         "<div class='am4-exp-btnrow' style='display:flex; gap:8px; margin-top:6px; align-items:center;'><button id='am4RteCreate' disabled style='cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:12px; font-weight:bold; background:#7f1d1d; color:#fecaca; opacity:0.5;'>Create route (in-game cash)</button><span id='am4RteMsg' style='font-size:10px; color:#38bdf8; word-break:break-word; flex-grow:1;'></span></div>" +
-        "<div style='font-size:9px; color:#64748b; margin-top:8px; border-top:1px dashed #334155; padding-top:6px;'>Only the acting tab can create. Route created via the verified new_route_info.php?mode=do contract; the plane moves from Parked to Routed. Set ticket prices after creation with the game's Auto button (the suite applies your multipliers). To change seats or add speed/fuel/CO₂ upgrades, use 🔧 Modify in this same Fleet panel.</div>";
+        "<div style='font-size:9px; color:#64748b; margin-top:8px; border-top:1px dashed #334155; padding-top:6px;'><b>Prep &amp; create</b> applies Explorer seating/cargo if needed, waits up to 10h for the modify timer (A380-800F seats ~4h, upgrades up to ~8h), then Check+Create. Queue several plane→dest jobs — they modify in parallel and create when each returns to Parked. Manual Check → Create still works.</div>";
     document.body.appendChild(panel);
 
     document.getElementById('am4FleetClose').addEventListener('click', function () { panel.style.display = 'none'; });
@@ -8850,9 +9935,25 @@ function am4FleetBuildPanel() {
         });
     }
     document.getElementById('am4RtePlane').addEventListener('change', am4FleetOnPlaneSelect);
-    document.getElementById('am4RteDest').addEventListener('change', am4FleetResetCreateBtn);
+    document.getElementById('am4RteDest').addEventListener('change', function () {
+        am4FleetResetCreateBtn();
+        am4FleetApplyDestRouteName(0);
+    });
     document.getElementById('am4RteCheck').addEventListener('click', am4FleetOnCheckRoute);
     document.getElementById('am4RteCreate').addEventListener('click', am4FleetOnCreateClick);
+    var prepBtn = document.getElementById('am4RtePrepCreate');
+    if (prepBtn) prepBtn.addEventListener('click', am4FleetOnPrepCreateClick);
+    var prepCancel = document.getElementById('am4RtePrepCancel');
+    if (prepCancel) prepCancel.addEventListener('click', am4FleetPrepCreateCancel);
+    var prepQ = document.getElementById('am4RtePrepQueue');
+    if (prepQ) {
+        prepQ.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.getAttribute) return;
+            var rid = t.getAttribute('data-prep-rm');
+            if (rid) am4FleetPrepQueueRemoveId(rid, 'removed');
+        });
+    }
     var rteInfo = document.getElementById('am4RteInfo');
     if (rteInfo) {
         rteInfo.addEventListener('click', function (e) {
@@ -8864,6 +9965,7 @@ function am4FleetBuildPanel() {
     am4FleetRenderParkedPicker();
     am4FleetReloadOrderAndLists();
     am4FleetEmbedTools();
+    if (typeof am4FleetPrepCreateResume === 'function') am4FleetPrepCreateResume();
     am4AircraftRefreshCatalog().then(function () {
         am4AircraftFillSelect(document.getElementById('am4FleetType'), am4AircraftTypeId());
         am4AircraftFillSelect(document.getElementById('am4StratType'), am4AircraftTypeId());
@@ -8967,7 +10069,7 @@ function am4FleetReadCfg() {
         cargo: false,
         e: am4FleetInp('am4FleetSeatY'),
         b: am4FleetInp('am4FleetSeatJ'),
-        f: am4FleetInp('am4FleetSeatF'),
+        f: (typeof am4IsCharter === 'function' && am4IsCharter()) ? 0 : am4FleetInp('am4FleetSeatF'),
         cargoAft: 0, cargoFwd: 0, cargoAftH: 0, cargoFwdH: 0
     };
 }
@@ -9011,12 +10113,16 @@ function am4FleetRenderCfg() {
         if (!(y > 0 || (p.orderJ || 0) > 0 || (p.orderF || 0) > 0)) {
             y = p.seats || ((p.typeId === 2) ? 600 : 0);
         }
+        var charterUi = (typeof am4IsCharter === 'function' && am4IsCharter());
         box.innerHTML =
-            "<div style='color:#f59e0b; font-size:10px; font-weight:bold; margin-bottom:4px;'>SEATING (required before order)</div>" +
+            "<div style='color:#f59e0b; font-size:10px; font-weight:bold; margin-bottom:4px;'>SEATING (required before order)" +
+            (charterUi ? " · charter Y+J only" : "") + "</div>" +
             "<div style='display:flex; gap:8px; align-items:center; font-size:10px; color:#94a3b8;'>" +
             "<label>Y <input type='number' id='am4FleetSeatY' min='0' max='" + (p.seats || 600) +"' value='" + y +"' style='width:52px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 4px;'></label>" +
             "<label>J <input type='number' id='am4FleetSeatJ' min='0' max='300' value='" + (p.orderJ || 0) +"' style='width:52px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 4px;'></label>" +
-            "<label>F <input type='number' id='am4FleetSeatF' min='0' max='200' value='" + (p.orderF || 0) +"' style='width:52px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 4px;'></label>" +
+            (charterUi
+                ? "<span style='color:#64748b;'>F 0 (charter)</span><input type='hidden' id='am4FleetSeatF' value='0'>"
+                : ("<label>F <input type='number' id='am4FleetSeatF' min='0' max='200' value='" + (p.orderF || 0) +"' style='width:52px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 4px;'></label>")) +
             "<span style='color:#64748b;'>of " + (p.seats || '?') +" seats</span></div>" ;
         ['am4FleetSeatY','am4FleetSeatJ','am4FleetSeatF' ].forEach(function (id) {
             var el = document.getElementById(id);
@@ -9031,6 +10137,10 @@ function am4FleetCfgValid(c) {
         var L = (c.cargoAftH || 0) + (c.cargoFwdH || 0);
         var H = (c.cargoAft || 0) + (c.cargoFwd || 0);
         if (L + H < 1) return 'Cargo holds are empty — set Large and/or Heavy (or queue from Explorer so research fill drives %).';
+        return null;
+    }
+    if ((typeof am4IsCharter === 'function' && am4IsCharter())) {
+        if (!(c.e > 0 && c.b > 0)) return 'Charter needs Economy + Business seats before ordering.';
         return null;
     }
     if ((c.e + c.b + c.f) < 1) return 'Seating is empty — set Y/J/F before ordering.';
@@ -9057,53 +10167,82 @@ function am4FleetBuildOrderUrl(hubId, amount, reg, cfg, bind) {
     var cargo = !!(cfg && (cfg.cargo || (am4AircraftProfile() && am4AircraftProfile().cargo)));
     var engId = (cfg && cfg.engineId) ? parseInt(cfg.engineId, 10) : am4AircraftEngineId();
     if (!engId) engId = am4AircraftEngineId();
+    reg = String(reg || '').trim();
+    var pctL = (cfg && cfg.lSeat != null) ? (parseInt(cfg.lSeat, 10) || 0)
+        : ((cfg.cargoAftH || 0) + (cfg.cargoFwdH || 0));
+    var pctH = (cfg && cfg.hSeat != null) ? (parseInt(cfg.hSeat, 10) || 0)
+        : ((cfg.cargoAft || 0) + (cfg.cargoFwd || 0));
     var params = {
         id: String(am4FleetOrderAcid()),
         hub: String(hubId),
-        r: String(reg),
+        r: reg,
         engine: String(engId),
         amount: String(amount),
-        charter: '0'
+        charter: am4CharterFlagValue()
     };
     var holds = {
         cargoAft: cfg.cargoAft,
         cargoFwd: cfg.cargoFwd,
         cargoAftH: cfg.cargoAftH,
         cargoFwdH: cfg.cargoFwdH,
-        eSeat: cfg.e,
-        bSeat: cfg.b,
-        fSeat: cfg.f,
+        lSeat: pctL,
+        hSeat: pctH,
+        largeLoad: pctL,
+        heavyLoad: pctH,
+        eSeat: cargo ? cfg.cargoAftH : cfg.e,
+        bSeat: cargo ? cfg.cargoFwdH : cfg.b,
+        fSeat: cargo ? 0 : cfg.f,
         hubSelection: hubId,
         reg: reg,
         engSelection: engId,
+        engineSelection: engId,
         acAmount: amount
     };
     var map = (bind && bind.map && Object.keys(bind.map).length) ? bind.map : null;
-    var appliedHold = false;
+    var appliedCargo = false;
+    var appliedPax = false;
     if (map) {
         Object.keys(map).forEach(function (q) {
             if (q === 'id') return;
             var src = map[q];
             if (!Object.prototype.hasOwnProperty.call(holds, src)) return;
-            params[q] = String(holds[src]);
-            if (/^cargo/.test(src) || src === 'eSeat' || src === 'bSeat' || src === 'fSeat') appliedHold = true;
+            var val = holds[src];
+            if (val == null || val === '') return;
+            params[q] = String(val);
+            if (/^cargo/.test(src) || src === 'lSeat' || src === 'hSeat' ||
+                src === 'largeLoad' || src === 'heavyLoad') appliedCargo = true;
+            if (src === 'eSeat' || src === 'bSeat' || src === 'fSeat') appliedPax = true;
         });
     }
     if (cargo) {
-        if (!appliedHold) {
-            // Same four letters as pax e/b plus cargo l/h: large→e/b, heavy→l/h.
-            params.l = String(cfg.cargoAft);
-            params.h = String(cfg.cargoFwd);
-            params.e = String(cfg.cargoAftH);
-            params.b = String(cfg.cargoFwdH);
+        // Always force freighter holds. A stale/pax bind marking eSeat must NOT skip this —
+        // otherwise the game accepts the order with default config + auto name (N-XXX).
+        // Hold letters: Heavy = cargoAft/Fwd → l/h; Large = cargoAftH/FwdH → e/b.
+        // Also send the named hold ids — some game builds read cargoAft* instead of l/h/e/b.
+        params.l = String(cfg.cargoAft != null ? cfg.cargoAft : 0);
+        params.h = String(cfg.cargoFwd != null ? cfg.cargoFwd : 0);
+        params.e = String(cfg.cargoAftH != null ? cfg.cargoAftH : 0);
+        params.b = String(cfg.cargoFwdH != null ? cfg.cargoFwdH : 0);
+        params.cargoAft = params.l;
+        params.cargoFwd = params.h;
+        params.cargoAftH = params.e;
+        params.cargoFwdH = params.b;
+        if (pctL + pctH > 0) {
+            if (params.lSeat == null) params.lSeat = String(pctL);
+            if (params.hSeat == null) params.hSeat = String(pctH);
         }
-    } else if (!appliedHold) {
+        if (!appliedCargo && !(Number(params.l) || Number(params.h) || Number(params.e) || Number(params.b))) {
+            console.log('[AM4 Bot Log] cargo order URL has empty holds — check Explorer L/H on job');
+        }
+    } else if (!appliedPax) {
         params.e = String(cfg.e);
         params.b = String(cfg.b);
         params.f = String(cfg.f);
     }
+    // Registration is mandatory for Auto-Build matching (dest / dest-2 / dest-3).
+    params.r = reg;
     var q = Object.keys(params).map(function (k) {
-        return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+        return encodeURIComponent(k) + '=' + encodeURIComponent(params[k] == null ? '' : params[k]);
     }).join('&');
     return 'ac_order_do.php?' + q;
 }
@@ -9127,9 +10266,9 @@ function am4FleetSendOrder(url) {
 function am4FleetLoadOrderBindings() {
     var typeId = am4AircraftTypeId();
     var getter = (typeof am4RteGameGet === 'function')
-        ? function () { return am4RteGameGet('ac_orders.php?mode=detail&id=' + typeId + '&charter=0'); }
+        ? function () { return am4RteGameGet('ac_orders.php?mode=detail&id=' + typeId + '&' + am4CharterQs()); }
         : function () {
-            return fetch('ac_orders.php?mode=detail&id=' + typeId + '&charter=0', { credentials: 'include'})
+            return fetch('ac_orders.php?mode=detail&id=' + typeId + '&' + am4CharterQs(), { credentials: 'include'})
                 .then(function (r) { return r.text().then(function (body) { return { body: body }; }); });
         };
     return getter().then(function (res) {
@@ -9270,16 +10409,89 @@ function am4FleetCargoDestEl() {
     return am4FleetOrderHost();
 }
 
+function am4FleetParkForeignOrderFields(host) {
+    var ids = ['hubSelection', 'cargoAft', 'cargoFwd', 'cargoAftH', 'cargoFwdH', 'reg',
+        'engSelection', 'engineSelection', 'acAmount', 'lSeat', 'hSeat', 'largeLoad', 'heavyLoad',
+        'btnPurchaseCargoDo', 'btnPurchasePaxDo'];
+    var parked = [];
+    ids.forEach(function (id) {
+        var all = document.querySelectorAll('#' + id);
+        var i;
+        for (i = 0; i < all.length; i++) {
+            if (host && host.contains(all[i])) continue;
+            parked.push({ el: all[i], id: id });
+            all[i].removeAttribute('id');
+            all[i].setAttribute('data-am4-parked-id', id);
+        }
+    });
+    return parked;
+}
+
+function am4FleetUnparkForeignOrderFields(parked) {
+    (parked || []).forEach(function (p) {
+        if (!p || !p.el) return;
+        try {
+            p.el.setAttribute('id', p.id);
+            p.el.removeAttribute('data-am4-parked-id');
+        } catch (eU) { /* ignore */ }
+    });
+}
+
+function am4FleetCargoFormTarget() {
+    // Prefer #acModel so game-delegated purchase handlers fire. Avoid it while Research owns it.
+    if (typeof am4SuiteResearchBusy === 'function' && am4SuiteResearchBusy()) {
+        return { el: am4FleetOrderHost(), restore: null };
+    }
+    var ac = document.getElementById('acModel');
+    if (ac) {
+        return {
+            el: ac,
+            restore: { html: ac.innerHTML, display: ac.style.display }
+        };
+    }
+    return { el: am4FleetOrderHost(), restore: null };
+}
+
 function am4FleetInjectCargoDetail(typeId) {
-    // Always inject into our hidden host — #acModel on the live page is often Research /
-    // another panel and does not contain the order form, which broke #btnPurchasePaxDo lookup.
-    var host = am4FleetOrderHost();
-    var destId = host.id;
+    var target = am4FleetCargoFormTarget();
+    var host = target.el;
+    var destId = host.id || 'acModel';
     var jq = (typeof window.jQuery !== 'undefined' && window.jQuery.ajax) ? window.jQuery : null;
     var fb = (typeof window.fbSig !== 'undefined' && window.fbSig != null) ? String(window.fbSig) : '';
-    var data = 'mode=detail&id=' + encodeURIComponent(typeId) + '&charter=0';
-    if (fb && data.indexOf('fbSig=') === -1) data +='&fbSig=' + encodeURIComponent(fb);
+    var data = 'mode=detail&id=' + encodeURIComponent(typeId) + '&' + am4CharterQs();
+    if (fb && data.indexOf('fbSig=') === -1) data += '&fbSig=' + encodeURIComponent(fb);
     return new Promise(function (resolve, reject) {
+        function finish(html) {
+            html = html == null ? '' : String(html);
+            try {
+                if (jq) jq(host).html(html);
+                else host.innerHTML = html;
+            } catch (eHtml) { host.innerHTML = html; }
+            // Keep a copy on the hidden host too (URL/button fallback + destroy-safe).
+            try {
+                var shadow = am4FleetOrderHost();
+                if (shadow && shadow !== host) shadow.innerHTML = html;
+            } catch (eSh) { /* ignore */ }
+            console.log('[AM4 Bot Log] cargo order form injected into #' + destId +
+                ' (' + html.length + ' chars)' + (target.restore ? ' [acModel]' : ''));
+            resolve({ html: html, host: host, restore: target.restore });
+        }
+        if (typeof window.Ajax === 'function' && destId) {
+            // Game Ajax path — same contract as clicking a type in the shop.
+            try {
+                window.Ajax('ac_orders.php?' + data, destId);
+                var tries = 0;
+                (function waitForm() {
+                    if (host.querySelector('#btnPurchaseCargoDo, #btnPurchasePaxDo, #cargoAft, #eSeat') || tries >= 25) {
+                        finish(host.innerHTML || '');
+                        return;
+                    }
+                    tries++;
+                    setTimeout(waitForm, 150);
+                })();
+                return;
+            } catch (eAjax) { /* fall through to jQuery */ }
+        }
         if (!jq) {
             reject(new Error('game jQuery missing'));
             return;
@@ -9290,11 +10502,7 @@ function am4FleetInjectCargoDetail(typeId) {
             data: data,
             cache: false,
             dataType: 'html',
-            success: function (html) {
-                try { jq(host).html(html); } catch (eHtml) { host.innerHTML = html || ''; }
-                console.log('[AM4 Bot Log] cargo order form injected into #' + destId + ' (' + String(html || '').length + ' chars)');
-                resolve(html == null ?'' : String(html));
-            },
+            success: function (html) { finish(html); },
             error: function (xhr) {
                 reject(new Error('order detail HTTP ' + ((xhr && xhr.status) || 0)));
             }
@@ -9348,29 +10556,33 @@ function am4FleetPlacePaxViaOrderUrl(hubId, hubName, reg, cfg, beforeOpt) {
                 ' hub=' + liveHub + ' r=' + reg + ' engine=' + engId +
                 ' seats Y' + e + '/J' + b + '/F' + f);
             return am4FleetSendOrder(url).then(function (body) {
-                var refused = /too low|not enough|insufficient|cannot afford|account low|denied|invalid/i.test(body || '');
-                var hint = am4FleetOrderBodyHint(body);
+                var refusedBody = (typeof am4FleetOrderLooksRefused === 'function')
+                    ? am4FleetOrderLooksRefused(body)
+                    : /too low|not enough (money|cash|funds)|insufficient (funds|cash|money)|cannot afford|account low/i.test(body || '');
                 return new Promise(function (resolve) {
                     setTimeout(function () {
                         am4FleetReadState().then(function (after) {
                             am4FleetClearOrderHost();
                             var nowPending = after.header ? after.header.pending : null;
                             var delta = (before != null && nowPending != null) ? (nowPending - before) : null;
+                            var refused = refusedBody || (delta != null && delta < 1);
                             resolve({
                                 ok: !!(delta && delta >= 1),
-                                refused: refused || (delta != null && delta < 1),
+                                refused: refused,
                                 before: before,
                                 nowPending: nowPending,
                                 delta: delta,
                                 reg: reg,
-                                hint: hint || (refused ?'order refused by game' : ''),
+                                hint: (typeof am4FleetOrderResultHint === 'function')
+                                    ? am4FleetOrderResultHint(body, refused, before, nowPending, delta)
+                                    : (am4FleetOrderBodyHint(body) || (refused ? 'order refused by game' : '')),
                                 nativeUrl: url
                             });
                         }).catch(function () {
                             am4FleetClearOrderHost();
                             resolve({ ok: false, refused: true, before: before, reg: reg });
                         });
-                    }, 2500);
+                    }, 2800);
                 });
             });
         });
@@ -9431,37 +10643,266 @@ function am4FleetSpyAcOrderDo(during) {
     });
 }
 
+function am4FleetOrderLooksRefused(body) {
+    // Keep this tight — bare "invalid" matches random page HTML and false-fails orders.
+    return /too low|not enough (money|cash|funds)|insufficient (funds|cash|money)|cannot afford|account low|purchase denied|order denied|not enough cash|hangar (is )?full|no hangar/i.test(String(body || ''));
+}
+
+function am4FleetOrderResultHint(body, refused, before, nowPending, delta) {
+    var hint = am4FleetOrderBodyHint(body);
+    if (hint) return hint;
+    if (delta != null && delta >= 1) return '';
+    if (before != null && nowPending != null) {
+        return 'Pending ' + before + '→' + nowPending + (refused ? ' — order not accepted' : ' — not confirmed yet');
+    }
+    return refused ? 'order refused by game' : 'Pending did not confirm';
+}
+
+function am4FleetPlaceCargoViaOrderUrl(hubId, hubName, cfg, reg, beforeOpt) {
+    var p = am4AircraftProfile();
+    var typeId = am4AircraftTypeId();
+    cfg = cfg || {};
+    reg = String(reg || '').trim();
+    if (typeof am4SuiteResearchBusy === 'function' && am4SuiteResearchBusy()) {
+        return Promise.resolve({ ok: false, refused: true, before: beforeOpt, nowPending: beforeOpt, reg: reg, hint: 'Research is running — cargo order paused'});
+    }
+    function send(before) {
+        return am4FleetInjectCargoDetail(typeId).then(function (injected) {
+            var html = (injected && injected.html != null) ? injected.html : String(injected || '');
+            var host = (injected && injected.host) || am4FleetOrderHost();
+            var restore = injected && injected.restore;
+            var parked = am4FleetParkForeignOrderFields(host);
+            function cleanup() {
+                am4FleetUnparkForeignOrderFields(parked);
+                if (restore && host) {
+                    try {
+                        host.innerHTML = restore.html;
+                        host.style.display = restore.display;
+                    } catch (eR) { /* ignore */ }
+                }
+                am4FleetClearOrderHost();
+            }
+            var bind = am4AircraftParseOrderBindings(html || host.innerHTML || '');
+            if ((!bind.map || !Object.keys(bind.map).length) && p && p.orderBind) {
+                bind = p.orderBind;
+            }
+            if (bind.pagePax && !bind.pageCargo) {
+                cleanup();
+                return { ok: false, refused: true, bindFail: true, before: before, nowPending: before, reg: reg, hint: 'order page is pax-only for this type'};
+            }
+            var hubSel = host.querySelector('#hubSelection');
+            var liveHub = am4FleetHubIdFromLiveSelect(hubSel, hubId, hubName);
+            if (!liveHub && hubName && typeof am4FleetOrderHubResolve === 'function') {
+                try {
+                    var hubs = [];
+                    if (hubSel) {
+                        Array.prototype.forEach.call(hubSel.querySelectorAll('option'), function (o) {
+                            hubs.push({ v: o.value, t: String(o.textContent || '').trim() });
+                        });
+                    }
+                    if (hubs.length) {
+                        am4FleetOrderInfo = Object.assign({}, am4FleetOrderInfo || {}, {
+                            hubs: hubs, typeId: typeId, cargo: true
+                        });
+                    }
+                } catch (eHubs) { /* ignore */ }
+                var hr = am4FleetOrderHubResolve(hubName);
+                if (hr.id) liveHub = String(hr.id);
+                else if (hr.why) {
+                    cleanup();
+                    return { ok: false, refused: true, before: before, nowPending: before, reg: reg, hint: hr.why };
+                }
+            }
+            if (!liveHub) {
+                cleanup();
+                return { ok: false, refused: true, before: before, nowPending: before, reg: reg,
+                    hint: 'hub "' + (hubName || hubId || '?') + '" is not on the cargo order form'};
+            }
+            if (hubId && String(hubId) !== String(liveHub)) {
+                console.log('[AM4 Bot Log] cargo hub corrected ' + hubId + ' → ' + liveHub +
+                    ' (' + (hubName || '') + ')');
+            }
+            var shell = document.createElement('div');
+            shell.innerHTML = '<input id="cargoAft"><input id="cargoFwd"><input id="cargoAftH"><input id="cargoFwdH">' +
+                '<input id="lSeat"><input id="hSeat">';
+            var norm = am4FleetApplyCargoLoadToHost(shell, Object.assign({ cargo: true }, cfg));
+            cfg = Object.assign({}, cfg, norm.cfg, { cargo: true, lSeat: norm.l, hSeat: norm.h });
+            var holdSum = (cfg.cargoAft || 0) + (cfg.cargoFwd || 0) + (cfg.cargoAftH || 0) + (cfg.cargoFwdH || 0);
+            if (holdSum < 1 && (norm.l + norm.h) < 1) {
+                cleanup();
+                return { ok: false, refused: true, before: before, nowPending: before, reg: reg, hint: 'cargo L/H empty'};
+            }
+            var regElMax = (p && p.regMaxLen) || 10;
+            try {
+                var regEl = host.querySelector('#reg, input[name="r"]');
+                var m = parseInt(regEl && regEl.getAttribute('maxlength'), 10);
+                if (m > 0) regElMax = m;
+                if (reg) am4FleetSetIn(host, '#reg, input[name="r"]', reg);
+                am4FleetApplyCargoLoadToHost(host, cfg);
+                am4FleetSetIn(host, '#hubSelection', liveHub);
+            } catch (eReg) { /* ignore */ }
+            if (regElMax > 0 && reg) reg = String(reg).slice(0, regElMax);
+            if (!reg) {
+                cleanup();
+                return { ok: false, refused: true, before: before, nowPending: before, reg: '', hint: 'missing dest registration (refusing game auto N-XXX)'};
+            }
+            var engId = (cfg && cfg.engineId) ? parseInt(cfg.engineId, 10) : am4AircraftEngineId();
+            try {
+                var engSel = host.querySelector('#engSelection, #engineSelection, select[name="engine"]');
+                if (engSel) {
+                    var engList = Array.prototype.map.call(engSel.querySelectorAll('option'), function (o) {
+                        return { id: parseInt(o.value, 10) || 0, name: String(o.textContent || '').trim() };
+                    }).filter(function (e) { return e.id; });
+                    var bestLive = am4AircraftFastestEngine(engList, typeId, p && p.name);
+                    if (bestLive) engId = bestLive.id;
+                }
+            } catch (eEng) { /* ignore */ }
+            var buyBtn = host.querySelector('#btnPurchaseCargoDo, .btnPurchaseCargo');
+            var buyAcid = buyBtn && (buyBtn.getAttribute('data-id') || buyBtn.getAttribute('data-acid') || buyBtn.getAttribute('acid'));
+            if (buyAcid && /^\d+$/.test(String(buyAcid))) {
+                try { am4AircraftSet({ orderAcid: parseInt(buyAcid, 10) }); } catch (eAc) { /* ignore */ }
+            }
+            if (engId && engId !== am4AircraftEngineId()) {
+                am4AircraftSet({ engineId: engId });
+                am4AircraftSyncCruiseFromEngine(am4AircraftCurrent, engId);
+            }
+            am4FleetSetIn(host, '#engSelection, #engineSelection, select[name="engine"]', engId);
+            am4FleetSetIn(host, '#acAmount', 1);
+            var url = am4FleetBuildOrderUrl(liveHub, 1, reg, {
+                cargo: true,
+                cargoAft: cfg.cargoAft,
+                cargoFwd: cfg.cargoFwd,
+                cargoAftH: cfg.cargoAftH,
+                cargoFwdH: cfg.cargoFwdH,
+                lSeat: norm.l,
+                hSeat: norm.h,
+                engineId: engId
+            }, bind);
+            console.log('[AM4 Bot Log] Fleet cargo via ac_order_do URL type=' + typeId +
+                ' hub=' + liveHub + (hubId && String(hubId) !== String(liveHub) ? (' (was ' + hubId + ')') : '') +
+                ' r=' + reg + ' engine=' + engId +
+                ' holds H' + cfg.cargoAft + '/' + cfg.cargoFwd + ' L' + cfg.cargoAftH + '/' + cfg.cargoFwdH +
+                ' load L' + norm.l + '%/H' + norm.h + '%');
+            console.log('[AM4 Bot Log] cargo order URL: ' + url);
+            return am4FleetSendOrder(url).then(function (body) {
+                var refusedBody = am4FleetOrderLooksRefused(body);
+                var bodyHint = am4FleetOrderBodyHint(body);
+                if (refusedBody) {
+                    console.log('[AM4 Bot Log] cargo order body looks refused: ' +
+                        String(bodyHint || body || '').replace(/\s+/g, ' ').slice(0, 180));
+                }
+                return new Promise(function (resolve) {
+                    setTimeout(function () {
+                        am4FleetReadState().then(function (after) {
+                            cleanup();
+                            var nowPending = after.header ? after.header.pending : null;
+                            var delta = (before != null && nowPending != null) ? (nowPending - before) : null;
+                            var refused = refusedBody || (delta != null && delta < 1);
+                            resolve({
+                                ok: !!(delta && delta >= 1),
+                                refused: refused,
+                                before: before,
+                                nowPending: nowPending,
+                                delta: delta,
+                                reg: reg,
+                                hubId: liveHub,
+                                hint: am4FleetOrderResultHint(body, refused, before, nowPending, delta),
+                                nativeUrl: url
+                            });
+                        }).catch(function () {
+                            cleanup();
+                            resolve({ ok: false, refused: true, before: before, reg: reg, hubId: liveHub,
+                                hint: bodyHint || 'could not re-read Pending after order' });
+                        });
+                    }, 2800);
+                });
+            });
+        }).catch(function (e) {
+            return { ok: false, refused: true, before: before, nowPending: before, reg: reg,
+                hint: 'cargo order form inject failed: ' + (e && e.message ? e.message : e) };
+        });
+    }
+    if (beforeOpt != null) return send(beforeOpt);
+    return am4FleetReadState().then(function (st) {
+        return send(st.header ? st.header.pending : null);
+    });
+}
+
 function am4FleetPlaceCargoViaGameButton(hubId, hubName, cfg, regOpt) {
     var p = am4AircraftProfile();
     var typeId = am4AircraftTypeId();
-    var reg = regOpt || am4FleetMakeReg(p);
+    var reg = String(regOpt || '').trim() || am4FleetMakeReg(p);
     var before = null;
+    var restore = null;
+    var parked = [];
+    var host = null;
+    var liveHub = '';
     if (typeof am4SuiteResearchBusy === 'function' && am4SuiteResearchBusy()) {
         return Promise.resolve({ ok: false, refused: true, before: null, nowPending: null, reg: reg, hint: 'Research is running — cargo order paused'});
+    }
+    function cleanup() {
+        am4FleetUnparkForeignOrderFields(parked);
+        if (restore && host) {
+            try {
+                host.innerHTML = restore.html;
+                host.style.display = restore.display;
+            } catch (eR) { /* ignore */ }
+        }
+        am4FleetClearOrderHost();
     }
     return am4FleetReadState().then(function (st) {
         before = st.header ? st.header.pending : null;
         return am4FleetInjectCargoDetail(typeId);
-    }).then(function () {
-        var host = am4FleetOrderHost();
-        var btn = host.querySelector('#btnPurchaseCargoDo') || host.querySelector('.btnPurchaseCargo');
+    }).then(function (injected) {
+        var html = (injected && injected.html != null) ? injected.html : String(injected || '');
+        host = (injected && injected.host) || am4FleetOrderHost();
+        restore = injected && injected.restore;
+        parked = am4FleetParkForeignOrderFields(host);
+        var btn = host.querySelector('#btnPurchaseCargoDo') || host.querySelector('.btnPurchaseCargo') ||
+            host.querySelector('[id*="PurchaseCargo"], [class*="PurchaseCargo"], [onclick*="PurchaseCargo"], [onclick*="ac_order_do"]');
+        var htmlStr = String(html || host.innerHTML || '');
+        var hasCargoFields = !!(host.querySelector('#cargoAft, #cargoFwd, #cargoAftH, #cargoFwdH, input[name="cargoAft"], input[name="cargoFwd"]'));
         if (!btn) {
-            return { ok: false, refused: true, bindFail: true, before: before, nowPending: before, reg: reg, hint: 'no #btnPurchaseCargoDo on order form'};
+            console.log('[AM4 Bot Log] no #btnPurchaseCargoDo after inject — using ac_order_do URL');
+            cleanup();
+            return am4FleetPlaceCargoViaOrderUrl(hubId, hubName, cfg, reg, before);
         }
         var hubSel = host.querySelector('#hubSelection');
-        var liveHub = am4FleetHubIdFromLiveSelect(hubSel, hubId, hubName);
+        liveHub = am4FleetHubIdFromLiveSelect(hubSel, hubId, hubName);
+        if (!liveHub && hubName && typeof am4FleetOrderHubResolve === 'function') {
+            try {
+                var hubs = [];
+                if (hubSel) {
+                    Array.prototype.forEach.call(hubSel.querySelectorAll('option'), function (o) {
+                        hubs.push({ v: o.value, t: String(o.textContent || '').trim() });
+                    });
+                }
+                if (hubs.length) {
+                    am4FleetOrderInfo = Object.assign({}, am4FleetOrderInfo || {}, {
+                        hubs: hubs, typeId: typeId, cargo: true
+                    });
+                }
+            } catch (eH) { /* ignore */ }
+            var hr = am4FleetOrderHubResolve(hubName);
+            if (hr.id) liveHub = String(hr.id);
+        }
         if (!liveHub) {
-            return { ok: false, refused: true, before: before, nowPending: before, reg: reg, hint: 'hub "' + hubName + '" is not on the cargo order form (panel id ' + hubId + ')'};
+            cleanup();
+            return { ok: false, refused: true, before: before, nowPending: before, reg: reg,
+                hint: 'hub "' + hubName + '" is not on the cargo order form (panel id ' + hubId + ')'};
+        }
+        if (hubId && String(hubId) !== String(liveHub)) {
+            console.log('[AM4 Bot Log] cargo hub corrected ' + hubId + ' → ' + liveHub +
+                ' (' + (hubName || '') + ')');
         }
         var regEl = host.querySelector('#reg, input[name="r"]');
         var max = parseInt(regEl && regEl.getAttribute('maxlength'), 10);
         if (max > 0) reg = String(reg).slice(0, max);
         if (regEl && !reg) reg = am4FleetMakeReg({ name: p.name, regMaxLen: max });
-        var load = am4FleetApplyCargoLoadToHost(host, cfg);
+        var load = am4FleetApplyCargoLoadToHost(host, cfg || {});
         cfg = load.cfg;
         am4FleetSetIn(host, '#hubSelection', liveHub);
         var engC = (cfg && cfg.engineId) ? parseInt(cfg.engineId, 10) : am4AircraftEngineId();
-        // Freighter: pick fastest among options (GP7277 for A380-800F). Do NOT force Trent 972.
         var engSel = host.querySelector('#engSelection, #engineSelection, select[name="engine"]');
         if (engSel) {
             var opts = Array.prototype.slice.call(engSel.querySelectorAll('option'));
@@ -9474,45 +10915,64 @@ function am4FleetPlaceCargoViaGameButton(hubId, hubName, cfg, regOpt) {
         am4FleetSetIn(host, '#engSelection, #engineSelection, select[name="engine"]', engC);
         am4FleetSetIn(host, '#reg, input[name="r"]', reg);
         am4FleetSetIn(host, '#acAmount', 1);
+        var buyAcid = btn.getAttribute('data-id') || btn.getAttribute('data-acid') || btn.getAttribute('acid');
+        if (buyAcid && /^\d+$/.test(String(buyAcid))) {
+            try { am4AircraftSet({ orderAcid: parseInt(buyAcid, 10) }); } catch (eAc) { /* ignore */ }
+        }
         console.log('[AM4 Bot Log] Fleet cargo via #btnPurchaseCargoDo type=' + typeId +
-            ' hub=' + liveHub + ' (panel had ' + hubId + ') engine=' + engC +
-            ' r=' + reg + ' holds ' + cfg.cargoAft + '/' + cfg.cargoFwd + '/' + cfg.cargoAftH + '/' + cfg.cargoFwdH +
-            ' load L' + load.l + '/H' + load.h);
+            ' hub=' + liveHub + (hubId && String(hubId) !== String(liveHub) ? (' (was ' + hubId + ')') : '') +
+            ' engine=' + engC + ' r=' + reg +
+            ' holds H' + cfg.cargoAft + '/' + cfg.cargoFwd + ' L' + cfg.cargoAftH + '/' + cfg.cargoFwdH +
+            ' load L' + load.l + '%/H' + load.h + '%' +
+            (hasCargoFields ? '' : ' (no hold fields?)'));
         return am4FleetSpyAcOrderDo(function () {
-            btn.click();
-            return new Promise(function (resolve) { setTimeout(resolve, 900); });
+            try {
+                if (window.jQuery) window.jQuery(btn).trigger('click');
+                else btn.click();
+            } catch (eClick) {
+                try { btn.click(); } catch (e2) { /* ignore */ }
+            }
+            return new Promise(function (resolve) { setTimeout(resolve, 1100); });
         }).then(function (spy) {
-            return { clicked: true, nativeUrl: spy && spy.nativeUrl, liveHub: liveHub, reg: reg };
+            return { clicked: true, nativeUrl: spy && spy.nativeUrl, liveHub: liveHub, reg: reg, cfg: cfg, engC: engC };
         });
     }).then(function (mid) {
-        if (!mid || mid.bindFail || mid.ok === false) return mid;
+        if (mid && mid.ok === false) return mid;
+        if (mid && mid.nativeUrl && mid.delta != null) return mid;
+        if (!mid || mid.bindFail) return mid;
         if (!mid.nativeUrl) {
-            console.log('[AM4 Bot Log] cargo click did not call Ajax(ac_order_do.php) — form handler may be jQuery-only');
+            console.log('[AM4 Bot Log] cargo click did not call Ajax(ac_order_do.php) — sending constructed URL');
+            // Button had no live handler (scripts stripped). Fall back to URL with live form values.
+            cleanup();
+            return am4FleetPlaceCargoViaOrderUrl(hubId, hubName, mid.cfg || cfg, mid.reg || reg, before);
         }
+        console.log('[AM4 Bot Log] native #btnPurchaseCargoDo request: ' + mid.nativeUrl);
         return new Promise(function (resolve) {
             setTimeout(function () {
                 am4FleetReadState().then(function (after) {
-                    am4FleetClearOrderHost();
+                    cleanup();
                     var nowPending = after.header ? after.header.pending : null;
                     var delta = (before != null && nowPending != null) ? (nowPending - before) : null;
+                    var refused = delta != null && delta < 1;
                     resolve({
                         ok: !!(delta && delta >= 1),
-                        refused: false,
+                        refused: refused,
                         before: before,
                         nowPending: nowPending,
                         delta: delta,
                         reg: mid.reg || reg,
-                        hint: mid.nativeUrl ? ('sent ' + mid.nativeUrl) : '',
+                        hubId: mid.liveHub || liveHub,
+                        hint: am4FleetOrderResultHint('', refused, before, nowPending, delta),
                         nativeUrl: mid.nativeUrl
                     });
                 }).catch(function () {
-                    am4FleetClearOrderHost();
-                    resolve({ ok: false, refused: true, reg: reg, before: before });
+                    cleanup();
+                    resolve({ ok: false, refused: true, reg: reg, before: before, hubId: liveHub });
                 });
-            }, 2500);
+            }, 2800);
         });
     }).catch(function (e) {
-        am4FleetClearOrderHost();
+        cleanup();
         throw e;
     });
 }
@@ -9534,8 +10994,9 @@ function am4FleetPlacePaxViaGameButton(hubId, hubName, reg, cfg) {
     return am4FleetReadState().then(function (st) {
         before = st.header ? st.header.pending : null;
         return am4FleetInjectCargoDetail(typeId);
-    }).then(function (html) {
-        var host = am4FleetOrderHost();
+    }).then(function (injected) {
+        var html = (injected && injected.html != null) ? injected.html : String(injected || '');
+        var host = (injected && injected.host) || am4FleetOrderHost();
         var btn = host.querySelector('#btnPurchasePaxDo') || host.querySelector('.btnPurchasePax');
         if (!btn) {
             var snippet = String(html || host.innerHTML || '').replace(/\s+/g,' ').slice(0, 120);
@@ -9551,14 +11012,14 @@ function am4FleetPlacePaxViaGameButton(hubId, hubName, reg, cfg) {
         var max = parseInt(regEl && regEl.getAttribute('maxlength'), 10);
         if (max > 0) reg = String(reg).slice(0, max);
         if (regEl && !reg) reg = am4FleetMakeReg({ name: p.name, regMaxLen: max });
-        am4FleetSetAll('#eSeat, input[name="eSeat"]', e);
-        am4FleetSetAll('#bSeat, input[name="bSeat"]', b);
-        am4FleetSetAll('#fSeat, input[name="fSeat"]', f);
-        am4FleetSetAll('#hubSelection', liveHub);
+        am4FleetSetIn(host, '#eSeat, input[name="eSeat"]', e);
+        am4FleetSetIn(host, '#bSeat, input[name="bSeat"]', b);
+        am4FleetSetIn(host, '#fSeat, input[name="fSeat"]', f);
+        am4FleetSetIn(host, '#hubSelection', liveHub);
         var engP = (cfg && cfg.engineId) ? parseInt(cfg.engineId, 10) : am4AircraftEngineId();
-        am4FleetSetAll('#engSelection, #engineSelection, select[name="engine"]', engP);
-        am4FleetSetAll('#reg, input[name="r"]', reg);
-        am4FleetSetAll('#acAmount', 1);
+        am4FleetSetIn(host, '#engSelection, #engineSelection, select[name="engine"]', engP);
+        am4FleetSetIn(host, '#reg, input[name="r"]', reg);
+        am4FleetSetIn(host, '#acAmount', 1);
         console.log('[AM4 Bot Log] Fleet pax via #btnPurchasePaxDo type=' + typeId +
             ' hub=' + liveHub + ' (panel had ' + hubId + ') engine=' + engP +
             ' r=' + reg + ' seats Y' + e + '/J' + b + '/F' + f);
@@ -9675,6 +11136,29 @@ function am4FleetWatchFinishItem(list, item, note) {
     am4FleetWatchSave(list.filter(function (x) { return x && !x.done; }));
 }
 
+// Drop watch entries for a cancelled Auto-Build job so it cannot keep modifying that plane.
+function am4FleetWatchDropForBuildJob(job) {
+    if (!job) return;
+    var regs = {};
+    [job.orderReg, job.destIcao, job.hangarReg].forEach(function (r) {
+        var k = String(r || '').toUpperCase().trim();
+        if (k) regs[k] = 1;
+    });
+    Object.keys(regs).forEach(function (k) { am4FleetWatchMarkHandled(k); });
+    var list = am4FleetWatchLoad();
+    var next = list.filter(function (x) {
+        if (!x || !x.reg) return false;
+        var r = String(x.reg).toUpperCase().trim();
+        if (regs[r]) return false;
+        if (job.planeId && x.planeId && String(x.planeId) === String(job.planeId)) return false;
+        // Also drop dest-N variants of the cancelled dest.
+        var dest = String(job.destIcao || '').toUpperCase().trim();
+        if (dest && (r === dest || r.indexOf(dest + '-') === 0)) return false;
+        return true;
+    });
+    if (next.length !== list.length) am4FleetWatchSave(next);
+}
+
 function am4FleetWatchTick() {
     if (am4FleetWatchBusy) return;
     if (typeof am4SuiteResearchBusy === 'function' && am4SuiteResearchBusy()) return;
@@ -9692,17 +11176,47 @@ function am4FleetWatchTick() {
             am4FleetWatchFinishItem(list, list[idx], 'already handled');
             continue;
         }
+        // Never touch a plane owned by ANY Auto-Build job (active or finished) — Build owns modify.
+        if (typeof am4BuildQueue !== 'undefined' && Array.isArray(am4BuildQueue)) {
+            var blocked = am4BuildQueue.some(function (j) {
+                if (!j) return false;
+                var r = String(list[idx].reg || '').toUpperCase();
+                if (j.planeId && list[idx].planeId && String(j.planeId) === String(list[idx].planeId)) return true;
+                if (j.hangarReg && String(j.hangarReg).toUpperCase() === r) return true;
+                if (j.orderReg && String(j.orderReg).toUpperCase() === r) return true;
+                if (j.destIcao && (r === String(j.destIcao).toUpperCase() ||
+                    r.indexOf(String(j.destIcao).toUpperCase() + '-') === 0)) return true;
+                return false;
+            });
+            if (blocked) {
+                am4FleetWatchFinishItem(list, list[idx], 'owned by Auto-Build');
+                continue;
+            }
+        }
         item = list[idx];
         break;
     }
     if (!item) return;
     am4FleetWatchBusy = true;
     am4BuildFindParkedByReg(item.reg).then(function (p) {
-        if (!p) return null;
+        if (!p) {
+            // Plane in Maintenance after a prior modify — stop hammering; timer will finish in-game.
+            item.misses = (item.misses || 0) + 1;
+            if (item.misses >= 3 || item.modifySent) {
+                am4FleetWatchFinishItem(list, item, item.modifySent ? 'modify timer running' : 'not at base');
+            } else {
+                am4FleetWatchSave(list);
+            }
+            return null;
+        }
         return am4FleetFetchModifyInfo(p.planeId).then(function (info) {
             if (!info || !info.looksValid) return null;
+            if (info.reason === 'pending' || /Maintenance/i.test(p.status || '')) {
+                am4FleetWatchFinishItem(list, item, 'in maintenance');
+                return null;
+            }
             var target = info.cargo ? am4FleetWatchCargoTarget(item, p, info) : null;
-            var curPct = info.cargo ? am4FleetCargoToGamePct(info.curL, info.curH) : null;
+            var curPct = info.cargo ? am4FleetCargoCurrentPct(info) : null;
             var modsOn = !!(info.mod1on && info.mod2on && info.mod3on);
             var loadOk = !info.cargo || am4FleetCargoPctClose(curPct, target);
             if (modsOn && loadOk) {
@@ -9712,15 +11226,22 @@ function am4FleetWatchTick() {
                 }
                 return null;
             }
+            // One real attempt only — never re-queue the same parked plane forever.
+            if (item.modifySent || (item.attempts || 0) >= 1) {
+                am4FleetWatchFinishItem(list, item, modsOn ? 'mods on — stop' : 'already attempted');
+                return null;
+            }
             if (typeof am4CanMutate === 'function' && !am4CanMutate()) return null;
             if (info.cargo) {
                 if (!target) {
                     console.log('[AM4 Bot Log] Post-delivery modify skipped — cargo L/H unread for ' + item.reg);
+                    am4FleetWatchFinishItem(list, item, 'no cargo target');
                     return null;
                 }
+                item.attempts = (item.attempts || 0) + 1;
+                item.modifySent = true;
+                am4FleetWatchSave(list);
                 return am4FleetApplyCargoModifyViaGame(p.planeId, target.l, target.h, true, true, true).then(function (res) {
-                    // Always stop the loop after one real attempt. Re-adding parked planes
-                    // forever was hammering N-356/357/358 every ~45s.
                     am4FleetWatchFinishItem(list, item, (res && res.ok) ? 'modify sent' : 'modify attempted');
                     if (res && res.ok) {
                         am4FleetSetBuyMsg('Delivery of ' + item.reg + ' found — applying CO₂/Speed/Fuel.','#10b981');
@@ -9732,6 +11253,9 @@ function am4FleetWatchTick() {
             }
             var e = info.curE, b = info.curB, f = info.curF;
             var url = am4FleetBuildModifyUrl(p.planeId, e, b, f, true, true, true, false);
+            item.attempts = (item.attempts || 0) + 1;
+            item.modifySent = true;
+            am4FleetWatchSave(list);
             console.log('[AM4 Bot Log] Post-delivery modify: ' + url);
             return fetch(url, { credentials: 'include'}).then(function (r) { return r.text(); }).then(function () {
                 am4FleetWatchFinishItem(list, item, 'modify sent');
@@ -9761,6 +11285,19 @@ function am4FleetWatchScanOrphans() {
             var wantIcon = am4AircraftIconId();
             if (wantIcon && window.statusData && window.statusData[p.planeId] &&
                 window.statusData[p.planeId].icon && window.statusData[p.planeId].icon !== wantIcon) return;
+            // Skip planes already owned by Auto-Build.
+            if (typeof am4BuildQueue !== 'undefined' && Array.isArray(am4BuildQueue)) {
+                var owned = am4BuildQueue.some(function (j) {
+                    if (!j) return false;
+                    if (j.planeId && String(j.planeId) === String(p.planeId)) return true;
+                    if (j.hangarReg && String(j.hangarReg).toUpperCase() === key) return true;
+                    if (j.orderReg && String(j.orderReg).toUpperCase() === key) return true;
+                    var dest = String(j.destIcao || '').toUpperCase();
+                    if (dest && (key === dest || key.indexOf(dest + '-') === 0)) return true;
+                    return false;
+                });
+                if (owned) return;
+            }
             am4FleetWatchAdd({ reg: p.reg, planeId: p.planeId, at: Date.now(), orphan: true });
             known[key] = 1;
         });
@@ -9885,8 +11422,10 @@ function am4FleetOnBuyClick(autoCargo) {
                     am4FleetWatchAdd({
                         reg: res.reg, typeId: am4AircraftTypeId(), cargo: !!p.cargo, at: Date.now()
                     });
+                    if (typeof am4FleetBustFleetCaches === 'function') am4FleetBustFleetCaches();
                     am4FleetSetBuyMsg('✓ Ordered ' + res.reg + ' — Pending ' + res.before + ' → ' + res.nowPending + '.','#10b981');
                     am4FleetRenderState();
+                    if (typeof am4FleetRenderModPicker === 'function') am4FleetRenderModPicker();
                     if (left > 1) setTimeout(function () { runOne(left - 1, doneOk + 1); }, 1800);
                     else {
                         am4FleetCargoChain.running = false;
@@ -9915,8 +11454,10 @@ function am4FleetOnBuyClick(autoCargo) {
                     am4FleetWatchAdd({
                         reg: res.reg, typeId: am4AircraftTypeId(), cargo: !!p.cargo, at: Date.now()
                     });
+                    if (typeof am4FleetBustFleetCaches === 'function') am4FleetBustFleetCaches();
                     am4FleetSetBuyMsg('✓ Ordered ' + res.reg + ' — Pending ' + res.before + ' → ' + res.nowPending + '.','#10b981');
                     am4FleetRenderState();
+                    if (typeof am4FleetRenderModPicker === 'function') am4FleetRenderModPicker();
                 } else if (res.bindFail) {
                     am4FleetSetBuyMsg('Stopped: order page is not cargo for this type id.','#ef4444');
                 } else if (res.refused) {
@@ -9989,15 +11530,23 @@ function am4FleetParseA380Rows(html, statusRe) {
         var pid = idm[1];
         var model = ((row.querySelector('.s-text') || {}).textContent || '').trim();
         var status = ((row.querySelector('.col-2.m-text') || {}).innerText || '').trim();
+        // Fallback when the status cell is empty/relocated: statusData.routeId === 0 ⇒ at base.
+        if (!status && sd[pid]) {
+            status = (Number(sd[pid].routeId) > 0) ? 'Routed' : 'Parked';
+        }
         if (statusRe && !statusRe.test(status)) return;
-        var seatTxt = (row.querySelector('.col-4.m-text') || {}).innerText || '';
-        var y = parseInt((seatTxt.match(/Y class:\s*(\d+)/) || [])[1], 10) || 0;
-        var j = parseInt((seatTxt.match(/J class:\s*(\d+)/) || [])[1], 10) || 0;
-        var f = parseInt((seatTxt.match(/F class:\s*(\d+)/) || [])[1], 10) || 0;
-        var l = parseInt((seatTxt.match(/Large(?:\s+load)?\s*:\s*(\d+)/i) ||
-            seatTxt.match(/L class:\s*(\d+)/i) || [])[1], 10) || 0;
-        var h = parseInt((seatTxt.match(/Heavy(?:\s+load)?\s*:\s*(\d+)/i) ||
-            seatTxt.match(/H class:\s*(\d+)/i) || [])[1], 10) || 0;
+        var seatTxt = (row.querySelector('.col-4.m-text') || row.querySelector('.col-4') || {}).innerText || '';
+        var y = parseInt(String((seatTxt.match(/Y class:\s*([\d,]+)/) || [])[1] || '').replace(/,/g, ''), 10) || 0;
+        var j = parseInt(String((seatTxt.match(/J class:\s*([\d,]+)/) || [])[1] || '').replace(/,/g, ''), 10) || 0;
+        var f = parseInt(String((seatTxt.match(/F class:\s*([\d,]+)/) || [])[1] || '').replace(/,/g, ''), 10) || 0;
+        var l = parseInt(String((seatTxt.match(/Large(?:\s+load)?\s*:\s*([\d,]+)/i) ||
+            seatTxt.match(/L class:\s*([\d,]+)/i) ||
+            seatTxt.match(/\bL(?:arge)?\s*[:=]\s*([\d,]+)/i) ||
+            seatTxt.match(/Large[^0-9]{0,24}([\d,]{3,})/i) || [])[1] || '').replace(/,/g, ''), 10) || 0;
+        var h = parseInt(String((seatTxt.match(/Heavy(?:\s+load)?\s*:\s*([\d,]+)/i) ||
+            seatTxt.match(/H class:\s*([\d,]+)/i) ||
+            seatTxt.match(/\bH(?:eavy)?\s*[:=]\s*([\d,]+)/i) ||
+            seatTxt.match(/Heavy[^0-9]{0,24}([\d,]{3,})/i) || [])[1] || '').replace(/,/g, ''), 10) || 0;
         // Plane NAME (reg): read it from the row HTML itself - the text of the
         // fleet_details.php anchor - NOT from window.statusData. statusData is a
         // page-LOAD snapshot, so a plane ordered after load (the auto-build case)
@@ -10011,7 +11560,24 @@ function am4FleetParseA380Rows(html, statusRe) {
         }
         if (!reg) reg = String((sd[pid] || {}).reg || '').trim(); // fallback for odd markup
         var air = am4FleetResolveAirport((reg.split(/[\s-]+/)[0] || ''));
-        var cargo = !!(l || h) || !!((sd[pid] || {}).cargo) || /freighter|-800F|\bcargo\b/i.test(model);
+        var snap = sd[pid] || sd[String(pid)] || {};
+        var paxSeats = y + j + f;
+        var lhSeats = l + h;
+        var cargo = false;
+        if (am4AircraftLooksFreighter(model) || /freighter|\bBCF\b|\bP2F\b|-800F/i.test(model)) {
+            cargo = true;
+        } else if (lhSeats > 100 && paxSeats === 0) {
+            cargo = true;
+        } else if (lhSeats > 1000 && lhSeats > paxSeats) {
+            cargo = true;
+        } else if (snap.cargo && paxSeats === 0 && lhSeats > 0) {
+            cargo = true;
+        }
+        // Freighter rows sometimes reuse Y/J labels for L/H display — prefer L/H when both exist.
+        if (cargo && lhSeats > 0 && paxSeats > 0 && lhSeats > paxSeats) {
+            y = 0; j = 0; f = 0;
+        }
+        if (!cargo && lhSeats > 1000 && paxSeats === 0) cargo = true;
         out.push({
             planeId: pid, reg: reg, model: model, status: status, y: y, j: j, f: f, l: l, h: h,
             cargo: cargo,
@@ -10030,8 +11596,15 @@ function am4FleetParseA380Rows(html, statusRe) {
 // every type page and concatenate. A short cache stops the parked + modify pickers from
 // double-fetching the same ~20 pages when they refresh together.
 var am4FleetTypeIdsCache = { at: 0, ids: [] };
-function am4FleetListTypeIds() {
-    if (am4FleetTypeIdsCache.ids.length && (Date.now() - am4FleetTypeIdsCache.at) < 10 * 60 * 1000) {
+function am4FleetBustFleetCaches() {
+    am4FleetTypeIdsCache = { at: 0, ids: [] };
+    am4FleetAllRowsCache = { at: 0, rows: [] };
+    am4FleetParkedCache = [];
+    am4FleetModListCache = [];
+    try { am4FleetRouteCandidateCache = { at: 0, rows: [], tally: ''}; } catch (eRc) { /* ignore */ }
+}
+function am4FleetListTypeIds(force) {
+    if (!force && am4FleetTypeIdsCache.ids.length && (Date.now() - am4FleetTypeIdsCache.at) < 10 * 60 * 1000) {
         return Promise.resolve(am4FleetTypeIdsCache.ids.slice());
     }
     return fetch('fleet.php', { credentials: 'include'})
@@ -10057,10 +11630,14 @@ function am4FleetListTypeIds() {
 
 var am4FleetAllRowsCache = { at: 0, rows: [] };
 function am4FleetListAllRows(force) {
-    if (!force && am4FleetAllRowsCache.rows.length && (Date.now() - am4FleetAllRowsCache.at) < 30000) {
+    if (force) {
+        // New deliveries / first plane of a type must not sit behind a stale type list.
+        am4FleetTypeIdsCache = { at: 0, ids: [] };
+        am4FleetAllRowsCache = { at: 0, rows: [] };
+    } else if (am4FleetAllRowsCache.rows.length && (Date.now() - am4FleetAllRowsCache.at) < 30000) {
         return Promise.resolve(am4FleetAllRowsCache.rows.slice());
     }
-    return am4FleetListTypeIds().then(function (ids) {
+    return am4FleetListTypeIds(!!force).then(function (ids) {
         return Promise.all(ids.map(function (tid) {
             return fetch('fleet.php?type=' + tid, { credentials: 'include'})
                 .then(function (r) { return r.text(); })
@@ -10084,6 +11661,48 @@ function am4FleetListAllRows(force) {
 // empty to it.
 var AM4_FLEET_AT_BASE_RE = /Parked|Grounded/i;
 
+function am4FleetStatusSnap(planeId) {
+    var sd = window.statusData || {};
+    if (sd[planeId]) return sd[planeId];
+    var s = String(planeId || '');
+    if (s && sd[s]) return sd[s];
+    var n = Number(planeId);
+    if (n && sd[n]) return sd[n];
+    return null;
+}
+
+// Reconcile fleet.php labels with live statusData (routeId 0 = no route = at base).
+function am4FleetEnrichRowStatus(p) {
+    if (!p || !p.planeId) return p;
+    var snap = am4FleetStatusSnap(p.planeId);
+    if (!snap) return p;
+    var rid = Number(snap.routeId) || 0;
+    var st = String(p.status || '');
+    if (/Maintenance/i.test(st)) return p; // timer wins over routeId
+    if (!(rid > 0)) {
+        // HTML sometimes still says Routed after delivery/modify while statusData has no route.
+        if (!AM4_FLEET_AT_BASE_RE.test(st)) p.status = 'Parked';
+        p._sdAtBase = true;
+    } else {
+        var now = Math.floor(Date.now() / 1000);
+        var arrived = Number(snap.arrived) || 0;
+        if (arrived > 0 && arrived <= now) p._sdLanded = true;
+    }
+    if (snap.reg && !p.reg) p.reg = String(snap.reg).trim();
+    return p;
+}
+
+function am4FleetIsLandedRouted(p) {
+    if (!p) return false;
+    if (p._sdLanded) return true;
+    if (!/Routed/i.test(p.status || '')) return false;
+    var snap = am4FleetStatusSnap(p.planeId);
+    if (!snap) return false;
+    var now = Math.floor(Date.now() / 1000);
+    var arrived = Number(snap.arrived) || 0;
+    return arrived > 0 && arrived <= now;
+}
+
 // What the fleet actually reported, for the pickers' empty state: "no parked aircraft" alone
 // cannot distinguish"nothing is at base" from"the fleet could not be read at all" .
 function am4FleetStatusTally(rows) {
@@ -10104,12 +11723,26 @@ function am4FleetStatusTally(rows) {
 // route. Every fleet id in the game is read, so the picker offers N-XXX / N-XXX-X /
 // N-XXX-XX regardless of model.
 var am4FleetParkedTally = '';
-function am4FleetListParkedA380() {
-    return am4FleetListAllRows().then(function (rows) {
-        am4FleetParkedTally = am4FleetStatusTally(rows);
-        var out = rows.filter(function (p) { return AM4_FLEET_AT_BASE_RE.test(p.status); });
-        am4FleetParkedCache = out;
-        return out;
+function am4FleetListParkedA380(force) {
+    return am4FleetListAllRows(force !== false).then(function (rows) {
+        // If whole-fleet read came up empty but Fleet State shows parked, fall back to the
+        // selected type page (same source the state line uses).
+        var finish = function (list) {
+            list = (list || []).map(am4FleetEnrichRowStatus);
+            am4FleetParkedTally = am4FleetStatusTally(list);
+            var out = list.filter(function (p) { return AM4_FLEET_AT_BASE_RE.test(p.status || ''); });
+            am4FleetParkedCache = out;
+            return out;
+        };
+        if (rows && rows.length) return finish(rows);
+        var tid = am4AircraftTypeId();
+        return fetch('fleet.php?type=' + tid, { credentials: 'include' })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                return am4FleetParseA380Rows(html, null).map(function (p) { p.typeId = tid; return p; });
+            })
+            .catch(function () { return []; })
+            .then(finish);
     });
 }
 
@@ -10126,31 +11759,66 @@ function am4FleetListRouteCandidates(force, onPartial) {
         if (typeof onPartial === 'function') onPartial(am4FleetRouteCandidateCache.rows.slice(), am4FleetRouteCandidateCache.tally);
         return Promise.resolve(am4FleetRouteCandidateCache.rows.slice());
     }
-    return am4FleetListAllRows(force).then(function (rows) {
-        var ready = rows.filter(function (p) { return AM4_FLEET_AT_BASE_RE.test(p.status); });
-        var sd = window.statusData || {};
-        var now = Math.floor(Date.now() / 1000);
+    return am4FleetListAllRows(!!force).then(function (rows) {
+        if (!(rows && rows.length)) {
+            // Same fallback as parked list — don't leave Build Route empty when Fleet State works.
+            var tid = am4AircraftTypeId();
+            return fetch('fleet.php?type=' + tid, { credentials: 'include' })
+                .then(function (r) { return r.text(); })
+                .then(function (html) {
+                    return am4FleetParseA380Rows(html, null).map(function (p) { p.typeId = tid; return p; });
+                })
+                .catch(function () { return []; });
+        }
+        return rows;
+    }).then(function (rows) {
+        rows = (rows || []).map(am4FleetEnrichRowStatus);
+        // Parked / Grounded (incl. statusData routeId=0 overrides), plus Maintenance at base
+        // so a hangar full of modify-timers is not an empty picker.
+        var ready = rows.filter(function (p) {
+            return AM4_FLEET_AT_BASE_RE.test(p.status || '') || /Maintenance/i.test(p.status || '');
+        });
+        var landedIds = {};
+        try {
+            if (typeof am4OpsListLandedFleetIds === 'function') {
+                am4OpsListLandedFleetIds().forEach(function (id) { landedIds[String(id)] = 1; });
+            }
+        } catch (eL) { /* ignore */ }
         var landed = rows.filter(function (p) {
-            if (!/Routed/i.test(p.status)) return false;
-            var snap = sd[p.planeId] || {};
-            var arrived = Number(snap.arrived) || 0;
-            return arrived > 0 && arrived <= now;
+            if (AM4_FLEET_AT_BASE_RE.test(p.status || '') || /Maintenance/i.test(p.status || '')) return false;
+            if (landedIds[String(p.planeId)]) return true;
+            return am4FleetIsLandedRouted(p);
         });
         var tally = am4FleetStatusTally(rows) +
-            (landed.length ?' · landed candidates ' + landed.length : '');
+            (ready.filter(function (p) { return /Maintenance/i.test(p.status || ''); }).length
+                ? (' · maint at base ' + ready.filter(function (p) { return /Maintenance/i.test(p.status || ''); }).length)
+                : '') +
+            (landed.length ? (' · landed candidates ' + landed.length) : '');
         am4FleetParkedTally = tally;
+        // Always surface at-base immediately — don't wait on landed verification.
         if (typeof onPartial === 'function') onPartial(ready.slice(), tally);
-        var verified = [], next = 0, active = 0, fail = {};
+        if (!landed.length || typeof am4RbFetchAircraftPage !== 'function' || typeof am4RbReadAircraftState !== 'function') {
+            am4FleetRouteCandidateCache = { at: Date.now(), rows: ready.slice(), tally: tally };
+            am4FleetParkedCache = ready.slice();
+            return ready.slice();
+        }
+        var verified = [], next = 0, active = 0, fail = {}, settled = false;
         return new Promise(function (resolve) {
             function failWhy(why) { fail[why] = (fail[why] || 0) + 1; }
             function finish() {
+                if (settled) return;
+                settled = true;
                 var failTxt = Object.keys(fail).map(function (k) { return k + ' ' + fail[k]; }).join(', ');
                 if (failTxt) tally +=' · not at base (' + failTxt + ')';
                 var all = ready.concat(verified);
                 all.sort(function (a, b) {
-                    var da = AM4_FLEET_AT_BASE_RE.test(a.status) ? 0 : 1;
-                    var db = AM4_FLEET_AT_BASE_RE.test(b.status) ? 0 : 1;
-                    return (da - db) || String(a.reg).localeCompare(String(b.reg));
+                    var rank = function (p) {
+                        if (AM4_FLEET_AT_BASE_RE.test(p.status || '')) return 0;
+                        if (p.reroute || /landed/i.test(p.status || '')) return 1;
+                        if (/Maintenance/i.test(p.status || '')) return 2;
+                        return 3;
+                    };
+                    return (rank(a) - rank(b)) || String(a.reg).localeCompare(String(b.reg));
                 });
                 am4FleetRouteCandidateCache = { at: Date.now(), rows: all, tally: tally };
                 am4FleetParkedCache = all.slice();
@@ -10188,6 +11856,8 @@ function am4FleetListRouteCandidates(force, onPartial) {
                 }
                 if (next >= landed.length && active === 0) { finish(); }
             }
+            // Never leave Build Route hanging forever on slow aircraft pages.
+            setTimeout(function () { finish(); }, 12000);
             pump();
         });
     });
@@ -10196,11 +11866,19 @@ function am4FleetListRouteCandidates(force, onPartial) {
 function am4FleetRouteOptionHtml(p) {
     var seats;
     var warn = '';
+    var charter = !p.cargo && typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(null, p);
     if (p.cargo) {
         seats = 'cargo';
+    } else if (charter) {
+        seats = p.y + '/' + p.j;
+        if ((Number(p.y) || 0) === 0 || (Number(p.j) || 0) === 0) warn = ' ⚠need Y+J';
     } else {
         seats = p.y + '/' + p.j + '/' + p.f;
-        if (p.y === 0 || p.j === 0 || p.f === 0) warn = ' ⚠no J/F';
+        if (typeof am4PaxIsRoutable === 'function') {
+            if (!am4PaxIsRoutable(p.y, p.j, p.f)) warn = am4IsCharter() ? ' ⚠need Y+J' : ' ⚠no J/F';
+        } else if (p.y === 0 || p.j === 0 || p.f === 0) {
+            warn = ' ⚠no J/F';
+        }
     }
     var mdl = p.model ? (' · ' + p.model) : '';
     var st = p.status ? (' · ' + p.status) : '';
@@ -10208,15 +11886,21 @@ function am4FleetRouteOptionHtml(p) {
         " (" + seats +")" + am4FleetEsc(mdl + st) + warn +"</option>" ;
 }
 
-// Parked, grounded AND routed planes of ANY type — the modify/reconfigure picker (B5b)
-// accepts all three: routed planes can still get upgrades (the game pulls them off the route
-// during the modify timer and needs them at base). Maintenance planes are excluded (mid-check).
+// Parked, grounded, routed AND maintenance — Modify must list planes mid-timer too
+// (otherwise Auto-Build loops look like "fleet state has them but Modify is empty").
 var am4FleetModListCache = [];
 var am4FleetModTally = '';
-function am4FleetListModifyA380() {
-    return am4FleetListAllRows().then(function (rows) {
+function am4FleetListModifyA380(force) {
+    // Default force=true so newly delivered planes appear (stale 30s/10min caches hid them).
+    return am4FleetListAllRows(force !== false).then(function (rows) {
         am4FleetModTally = am4FleetStatusTally(rows);
-        var out = rows.filter(function (p) { return /Parked|Routed|Grounded/i.test(p.status); });
+        // Include Pending / Arrived / Maintenance so in-timer planes stay visible & selectable.
+        var out = rows.filter(function (p) {
+            return /Parked|Routed|Grounded|Pending|Arrived|Delivery|Hangar|Maintenance/i.test(p.status || '');
+        }).map(function (p) {
+            if (am4FleetRowLooksCargo(p)) p.cargo = true;
+            return p;
+        });
         am4FleetModListCache = out;
         return out;
     });
@@ -10242,13 +11926,15 @@ function am4FleetParseRouteConfig(html) {
     };
     var hasPriceL = !!box.querySelector('#price_l');
     var hasPriceH = !!box.querySelector('#price_h');
-    var hasPaxTrio = !!(box.querySelector('#fSeat, #fTicket, #price_f') &&
-        box.querySelector('#eSeat, #eTicket, #price_y') &&
+    var hasPaxDuo = !!(box.querySelector('#eSeat, #eTicket, #price_y') &&
         box.querySelector('#bSeat, #bTicket, #price_j'));
+    var hasPaxTrio = !!(hasPaxDuo && box.querySelector('#fSeat, #fTicket, #price_f'));
+    var charterMode = (typeof am4IsCharter === 'function' && am4IsCharter());
     // Freighter panels often reuse #eSeat/#bSeat for Large/Heavy (no #price_l/#price_h, no F).
+    // Charter Eco+Biz also has no First — do NOT treat that as cargo.
     var looksCargo = hasPriceL || hasPriceH || !!cargoSpecs ||
         /Large\s*load|Heavy\s*load|cargo\s*ticket|#price_l|freighter/i.test(html) ||
-        (!hasPaxTrio && !!(box.querySelector('#eSeat, #bSeat') && !box.querySelector('#fSeat, #fTicket, #price_f')));
+        (!charterMode && !hasPaxTrio && !!(box.querySelector('#eSeat, #bSeat') && !box.querySelector('#fSeat, #fTicket, #price_f')));
 
     var nativePrices = null;
     var pl = fieldNumber('#price_l');
@@ -10262,8 +11948,8 @@ function am4FleetParseRouteConfig(html) {
 
     if (looksCargo && pl > 0 && ph > 0) {
         nativePrices = { type: 'cargo', l: pl, h: ph, source: 'route fields' };
-    } else if (!looksCargo && py > 0 && pj > 0 && pf > 0) {
-        nativePrices = { type: 'pax', y: py, j: pj, f: pf, source: 'route fields' };
+    } else if (!looksCargo && py > 0 && pj > 0 && (pf > 0 || charterMode)) {
+        nativePrices = { type: 'pax', y: py, j: pj, f: pf || 0, source: 'route fields' };
     } else {
         // Fresh panels often leave fields empty; Auto onclick carries the game's base values.
         // Cargo: autoPrice(L, H) or autoPrice(L, H, baseL, baseH). Pax: autoPrice(Y, J, F, …).
@@ -10282,7 +11968,8 @@ function am4FleetParseRouteConfig(html) {
             }).filter(function (n) { return isFinite(n) && n > 0; });
         }
         if (nums && nums.length >= 2) {
-            var treatCargoAuto = looksCargo || nums.length === 2 || (nums.length >= 4 && !hasPaxTrio);
+            var treatCargoAuto = looksCargo ||
+                (!charterMode && (nums.length === 2 || (nums.length >= 4 && !hasPaxTrio)));
             if (treatCargoAuto) {
                 // 2-arg or 4-arg cargo Auto; first two are Large/Heavy (base or already filled).
                 pl = nums[0]; ph = nums[1];
@@ -10291,8 +11978,13 @@ function am4FleetParseRouteConfig(html) {
                 }
             } else if (nums.length >= 3) {
                 py = nums[0]; pj = nums[1]; pf = nums[2];
-                if (py > 0 && pj > 0 && pf > 0) {
-                    nativePrices = { type: 'pax', y: py, j: pj, f: pf, source: 'game Auto values' };
+                if (py > 0 && pj > 0 && (pf > 0 || charterMode)) {
+                    nativePrices = { type: 'pax', y: py, j: pj, f: pf || 0, source: 'game Auto values' };
+                }
+            } else if (charterMode && nums.length >= 2) {
+                py = nums[0]; pj = nums[1];
+                if (py > 0 && pj > 0) {
+                    nativePrices = { type: 'pax', y: py, j: pj, f: 0, source: 'game Auto values' };
                 }
             }
         }
@@ -10346,8 +12038,8 @@ function am4FleetPlaneSeatCap(p) {
     return 0;
 }
 
-// Demand-based Y/J/F that fits cap and keeps every class > 0 (required for route creation).
-function am4FleetRouteTargetSeats(demand, cap, stratN) {
+// Demand-based seats that fit cap and keep required classes > 0 (Y+J+F scheduled, Y+J charter).
+function am4FleetRouteTargetSeats(demand, cap, stratN, charterForce) {
     cap = Math.max(0, parseInt(cap, 10) || 0);
     if (!cap) return null;
     var n = stratN || ((typeof am4StratLoadCfg === 'function') ? am4StratLoadCfg().n : 2) || 2;
@@ -10356,10 +12048,144 @@ function am4FleetRouteTargetSeats(demand, cap, stratN) {
         j: Math.floor((demand.j || 0) / n),
         f: Math.floor((demand.f || 0) / n)
     } : { y: 0, j: 0, f: 0 };
+    var charter = !!charterForce || (typeof am4IsCharter === 'function' && am4IsCharter());
+    if (charter) caps.f = 0;
     var expCfg = (typeof am4ExpLoadCfg === 'function') ? am4ExpLoadCfg() : {};
-    var topOrder = (expCfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ];
+    var topOrder = (typeof am4PaxFillTopOrder === 'function')
+        ? am4PaxFillTopOrder(expCfg)
+        : ((expCfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ]);
     var norm = am4PaxSeatEnsureRoutable(caps.y, caps.j, caps.f, cap, topOrder);
+    norm = am4PaxSeatBoostThinClasses(norm, cap, topOrder);
+    if (charter) norm.f = 0;
     return { y: norm.y, j: norm.j, f: norm.f };
+}
+
+/** Explorer "good" row for a destination (cached scan), including cfg seats Y/J/F. */
+function am4FleetExplorerRouteForDest(arrId) {
+    arrId = String(arrId || '');
+    if (!arrId) return null;
+    var findIn = function (good) {
+        if (!good || !good.length) return null;
+        for (var i = 0; i < good.length; i++) {
+            if (good[i] && String(good[i].arrId) === arrId) return good[i];
+        }
+        return null;
+    };
+    try {
+        if (typeof am4ExpResults === 'object' && am4ExpResults) {
+            for (var hubId in am4ExpResults) {
+                if (!Object.prototype.hasOwnProperty.call(am4ExpResults, hubId)) continue;
+                var hit = findIn(am4ExpResults[hubId] && am4ExpResults[hubId].good);
+                if (hit) return hit;
+            }
+        }
+    } catch (eMem) { /* ignore */ }
+    try {
+        if (typeof am4ExpLoadCache === 'function') {
+            var cache = am4ExpLoadCache() || {};
+            for (var ck in cache) {
+                if (!Object.prototype.hasOwnProperty.call(cache, ck)) continue;
+                var hit2 = findIn(cache[ck] && cache[ck].good);
+                if (hit2) return hit2;
+            }
+        }
+    } catch (eCache) { /* ignore */ }
+    return null;
+}
+
+function am4FleetSeatsMatch(a, b, charter) {
+    if (!a || !b) return false;
+    if ((Number(a.y) || 0) !== (Number(b.y) || 0)) return false;
+    if ((Number(a.j) || 0) !== (Number(b.j) || 0)) return false;
+    if (charter) return true;
+    return (Number(a.f) || 0) === (Number(b.f) || 0);
+}
+
+/**
+ * Preferred seating for this dest: Explorer fill cfg when present, else Strategy demand fill.
+ * Always normalized to this plane's seat capacity + charter/scheduled rules.
+ */
+function am4FleetRouteDesiredSeats(p, demand, destId, charterForce) {
+    if (!p) return null;
+    var charter = !!charterForce || (typeof am4FleetPaxIsCharterLayout === 'function' &&
+        am4FleetPaxIsCharterLayout(null, p)) || (typeof am4IsCharter === 'function' && am4IsCharter());
+    var cap = am4FleetPlaneSeatCap(p);
+    if (!(cap > 0)) return null;
+    var expCfg = (typeof am4ExpLoadCfg === 'function') ? am4ExpLoadCfg() : {};
+    var topOrder = (typeof am4PaxFillTopOrder === 'function')
+        ? am4PaxFillTopOrder(expCfg)
+        : ((expCfg.seatStrategy === 'economy-first') ? ['y', 'j', 'f'] : ['f', 'j', 'y']);
+    var source = 'demand';
+    var raw = null;
+    var g = am4FleetExplorerRouteForDest(destId);
+    if (g && g.cfg && !g.cargo && !(g.cfg.l || g.cfg.h)) {
+        raw = {
+            y: Math.max(0, parseInt(g.cfg.y, 10) || 0),
+            j: Math.max(0, parseInt(g.cfg.j, 10) || 0),
+            f: charter ? 0 : Math.max(0, parseInt(g.cfg.f, 10) || 0)
+        };
+        if (raw.y > 0 && raw.j > 0 && (charter || raw.f > 0)) source = 'explorer';
+        else raw = null;
+    }
+    if (!raw) {
+        var stratN = (typeof am4StratLoadCfg === 'function') ? am4StratLoadCfg().n : 2;
+        raw = am4FleetRouteTargetSeats(demand, cap, stratN, charter);
+        source = 'demand';
+    }
+    if (!raw) return null;
+    if (charter) raw.f = 0;
+    var norm = am4PaxSeatEnsureRoutable(raw.y, raw.j, raw.f, cap, topOrder);
+    if (typeof am4PaxSeatBoostThinClasses === 'function') {
+        norm = am4PaxSeatBoostThinClasses(norm, cap, topOrder);
+    }
+    if (charter) norm.f = 0;
+    if (!(norm.y > 0 && norm.j > 0 && (charter || norm.f > 0))) return null;
+    return { y: norm.y, j: norm.j, f: norm.f, source: source, charter: !!charter };
+}
+
+/** Explorer Large%/Heavy% for a researched cargo dest (from scan fill conf or packed kg). */
+function am4FleetRouteDesiredCargo(destId) {
+    var g = typeof am4FleetExplorerRouteForDest === 'function'
+        ? am4FleetExplorerRouteForDest(destId) : null;
+    if (!g) return null;
+    var pct = null;
+    if (g.conf && (g.conf.pctL != null || g.conf.lSeat != null || g.conf.pctH != null || g.conf.hSeat != null)) {
+        pct = am4FleetCargoWantToPct(
+            g.conf.pctL != null ? g.conf.pctL : g.conf.lSeat,
+            g.conf.pctH != null ? g.conf.pctH : g.conf.hSeat
+        );
+    }
+    if ((!pct || !(pct.l + pct.h > 0)) && g.cfg && (g.cfg.l || g.cfg.h) &&
+        typeof am4CargoLoadToConfig === 'function') {
+        var conf = am4CargoLoadToConfig(g.cfg.l || 0, g.cfg.h || 0);
+        if (conf && (conf.pctL + conf.pctH) > 0) {
+            pct = { l: conf.pctL, h: conf.pctH };
+        }
+    }
+    if ((!pct || !(pct.l + pct.h > 0)) && g.demand && (g.demand.l || g.demand.h) &&
+        typeof am4CargoLoadToConfig === 'function') {
+        var n = (typeof am4StratLoadCfg === 'function') ? am4StratLoadCfg().n : 2;
+        n = Math.max(1, parseInt(n, 10) || 2);
+        var conf2 = am4CargoLoadToConfig(
+            Math.floor((g.demand.l || 0) / n),
+            Math.floor((g.demand.h || 0) / n)
+        );
+        if (conf2 && (conf2.pctL + conf2.pctH) > 0) {
+            pct = { l: conf2.pctL, h: conf2.pctH };
+        }
+    }
+    if (!pct || !(pct.l + pct.h > 0)) return null;
+    return { l: pct.l, h: pct.h, source: 'explorer' };
+}
+
+/** True when this parked plane can be routed for pax (charter Y+J or scheduled Y+J+F). */
+function am4FleetPlaneRoutableForRoute(p) {
+    if (!p) return false;
+    if (p.cargo || (typeof am4FleetRowLooksCargo === 'function' && am4FleetRowLooksCargo(p))) return true;
+    var charter = typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(null, p);
+    if (charter) return (Number(p.y) || 0) > 0 && (Number(p.j) || 0) > 0;
+    if (typeof am4PaxIsRoutable === 'function') return am4PaxIsRoutable(p.y, p.j, p.f);
+    return (Number(p.y) || 0) > 0 && (Number(p.j) || 0) > 0 && (Number(p.f) || 0) > 0;
 }
 
 var am4FleetRouteSeatFix = null;
@@ -10387,8 +12213,9 @@ function am4FleetPricePlan(rc, cargo) {
         var l = 0, h = 0, src = '';
         if (n && n.type === 'cargo' && n.l > 0 && n.h > 0) {
             l = Number(n.l); h = Number(n.h); src = n.source;
-        } else if (n && n.type === 'pax' && n.y > 0 && n.j > 0 && !(n.f > 0)) {
-            // Mis-tagged freighter panel that only filled Y/J slots.
+        } else if (n && n.type === 'pax' && n.y > 0 && n.j > 0 && !(n.f > 0) &&
+            !(typeof am4IsCharter === 'function' && am4IsCharter())) {
+            // Mis-tagged freighter panel that only filled Y/J slots (not charter Eco+Biz).
             l = Number(n.y); h = Number(n.j); src = (n.source || 'route fields') + ' (Y/J→L/H)';
         } else if (rc.distKm > 0 && typeof am4ExpCargoPrices === 'function') {
             var fp = am4ExpCargoPrices(rc.distKm);
@@ -10403,14 +12230,28 @@ function am4FleetPricePlan(rc, cargo) {
             source: src || 'cargo'
         };
     }
-    if (!n || n.type !== 'pax') return null;
+    if (!n || n.type !== 'pax') {
+        // Last resort: published AM4 pax Autoprice formulas (Easy vs Realism).
+        if (rc.distKm > 0 && typeof am4ExpPrices === 'function') {
+            var bp = am4ExpPrices(rc.distKm);
+            if (bp && bp.y > 0 && bp.j > 0 && (bp.f > 0 || (typeof am4IsCharter === 'function' && am4IsCharter()))) {
+                n = { type: 'pax', y: bp.y, j: bp.j, f: bp.f || 0, source: 'AM4 pax formula' };
+            } else {
+                return null;
+            }
+        } else {
+            return null;
+        }
+    }
     var y = Number(n.y), j = Number(n.j), f = Number(n.f);
-    if (!(y > 0 && j > 0 && f > 0)) return null;
+    if (!(y > 0 && j > 0)) return null;
+    var needsFirst = (typeof am4PaxNeedsFirst === 'function') ? am4PaxNeedsFirst() : true;
+    if (needsFirst && !(f > 0)) return null;
     return {
         type: 'pax',
         y: Math.floor(y * Number(AM4_CONFIG.paxMultiEco)),
         j: Math.floor(j * Number(AM4_CONFIG.paxMultiBiz)),
-        f: Math.floor(f * Number(AM4_CONFIG.paxMultiFirst)),
+        f: needsFirst ? Math.floor(f * Number(AM4_CONFIG.paxMultiFirst)) : 0,
         source: n.source
     };
 }
@@ -10446,10 +12287,13 @@ function am4FleetSetRouteMsg(msg, color) {
 function am4FleetSelectedParked() {
     var sel = document.getElementById('am4RtePlane');
     if (!sel) return null;
-    var pid = sel.value;
-    var fromCandidates = am4FleetRouteCandidateCache.rows.filter(function (p) { return p.planeId === pid; })[0];
+    var pid = String(sel.value || '');
+    if (!pid) return null;
+    var fromCandidates = am4FleetRouteCandidateCache.rows.filter(function (p) {
+        return String(p.planeId) === pid;
+    })[0];
     if (fromCandidates) return fromCandidates;
-    return am4FleetParkedCache.filter(function (p) { return p.planeId === pid; })[0] || null;
+    return am4FleetParkedCache.filter(function (p) { return String(p.planeId) === pid; })[0] || null;
 }
 
 function am4FleetResetCreateBtn() {
@@ -10459,23 +12303,49 @@ function am4FleetResetCreateBtn() {
     am4FleetRouteSeatFix = null;
 }
 
+// Dest-ICAO route name (same convention as Auto-Build).
+function am4FleetRouteNameForDest(destIcao, acOnRoute) {
+    var base = String(destIcao || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) base = 'N';
+    if (base.length > 8) base = base.slice(0, 8);
+    var n = Math.max(0, parseInt(acOnRoute, 10) || 0);
+    var reg = n > 0 ? (base + '-' + (n + 1)) : base;
+    if (reg.length > 10) reg = reg.slice(0, 10);
+    return reg;
+}
+
+function am4FleetApplyDestRouteName(acOnRoute) {
+    var regEl = document.getElementById('am4RteReg');
+    var destEl = document.getElementById('am4RteDest');
+    if (!regEl || !destEl || !destEl.value) return;
+    var air = am4FleetResolveAirport(destEl.value);
+    var icao = (air && (air.icao || air.iata)) || '';
+    if (!icao) return;
+    regEl.value = am4FleetRouteNameForDest(icao, acOnRoute);
+}
+
 function am4FleetRenderParkedPicker() {
     var sel = document.getElementById('am4RtePlane');
     if (!sel) return;
+    var prev = String(sel.value || '');
     sel.innerHTML ="<option value=''>reading parked aircraft…</option>" ;
+    if (typeof am4FleetBustFleetCaches === 'function') am4FleetBustFleetCaches();
     am4FleetListRouteCandidates(true, function (partial, tally) {
         if (!partial.length) {
             sel.innerHTML ="<option value=''>" + am4FleetEsc('checking landed at home — ' + tally) +"</option>" ;
             return;
         }
         sel.innerHTML = partial.map(am4FleetRouteOptionHtml).join('');
+        if (prev && partial.some(function (p) { return String(p.planeId) === prev; })) sel.value = prev;
         am4FleetOnPlaneSelect();
     }).then(function (list) {
         if (!list.length) {
             sel.innerHTML ="<option value=''>" + am4FleetEsc('no aircraft at base — ' + am4FleetParkedTally) +"</option>" ;
+            am4FleetSetRouteMsg('Nothing Parked/Grounded right now. If tally shows only Routed + Maintenance, wait for modify timers to finish (planes return to Parked), or wait until a Routed plane lands at the gate.','#f59e0b');
             return;
         }
         sel.innerHTML = list.map(am4FleetRouteOptionHtml).join('');
+        if (prev && list.some(function (p) { return String(p.planeId) === prev; })) sel.value = prev;
         am4FleetOnPlaneSelect();
     }).catch(function () { sel.innerHTML ="<option value=''>could not read fleet</option>" ; });
 }
@@ -10596,32 +12466,43 @@ function am4FleetResolvePlaneHub(p) {
     });
 }
 
-// Picking a plane fills researched unbuilt destinations for its home hub. The registration
-// is still used as the route name; it is only pre-selected as destination if it is in band
-// and not already built.
+// Picking a plane fills researched unbuilt destinations for its home hub.
+// Route name is set to the destination ICAO when a dest is chosen (not the hangar reg).
 function am4FleetOnPlaneSelect() {
     var p = am4FleetSelectedParked();
     var dest = document.getElementById('am4RteDest');
     var reg = document.getElementById('am4RteReg');
     var info = document.getElementById('am4RteInfo');
-    if (reg) reg.value = p ? (p.reg || '') : '';
     if (info) info.innerHTML = '';
     am4FleetSetRouteMsg('','#38bdf8');
     am4FleetResetCreateBtn();
     if (!p) {
+        if (reg) reg.value = '';
         if (dest) dest.innerHTML ="<option value=''>pick an aircraft first</option>" ;
         am4FleetSetDestNote('','#64748b');
         return;
     }
+    // Prefer intended dest ICAO as a starter name; dest change overwrites with exact ICAO.
+    if (reg) {
+        var preferName = p.intendedDestIcao || '';
+        if (preferName && am4BuildRegMatchesDest && am4BuildRegMatchesDest(p.reg, preferName)) {
+            reg.value = String(p.reg || preferName).trim();
+        } else if (preferName) {
+            reg.value = am4FleetRouteNameForDest(preferName, 0);
+        } else {
+            reg.value = '';
+        }
+    }
     if (dest) dest.innerHTML ="<option value=''>reading home hub…</option>" ;
     am4FleetSetDestNote('Reading this plane\'s home hub…','#94a3b8');
-    var wantPlane = p.planeId;
+    var wantPlane = String(p.planeId);
     am4FleetResolvePlaneHub(p).then(function (hub) {
-        if ((am4FleetSelectedParked() || {}).planeId !== wantPlane) return;
+        if (String((am4FleetSelectedParked() || {}).planeId || '') !== wantPlane) return;
         var prefer = p.intendedDestId || '';
         am4FleetFillDestSelect(hub, prefer);
+        if (prefer) am4FleetApplyDestRouteName(0);
     }).catch(function () {
-        if ((am4FleetSelectedParked() || {}).planeId !== wantPlane) return;
+        if (String((am4FleetSelectedParked() || {}).planeId || '') !== wantPlane) return;
         am4FleetFillDestSelect(null,'');
     });
 }
@@ -12497,6 +14378,9 @@ function am4RtePriceFields() {
     var j = am4RtePickPriceField(scopes, ['bSeat','bTicket','price_j' ]);
     var f = am4RtePickPriceField(scopes, ['fSeat','fTicket','price_f' ]);
     if (y && j && f) return { y: y, j: j, f: f };
+    if (typeof am4IsCharter === 'function' && am4IsCharter() && y && j) {
+        return { y: y, j: j, f: f || null, charter: true };
+    }
     var large = am4RtePickPriceField(scopes, ['price_l']);
     var heavy = am4RtePickPriceField(scopes, ['price_h']);
     if (large && heavy) return { l: large, h: heavy, cargo: true };
@@ -12508,12 +14392,18 @@ function am4RtePricesReady(fields) {
     if (fields.cargo) {
         return am4RteNum(fields.l.value) > 0 && am4RteNum(fields.h.value) > 0;
     }
+    if (fields.charter || (typeof am4IsCharter === 'function' && am4IsCharter())) {
+        return am4RteNum(fields.y.value) > 0 && am4RteNum(fields.j.value) > 0;
+    }
     return am4RteNum(fields.y.value) > 0 && am4RteNum(fields.j.value) > 0 && am4RteNum(fields.f.value) > 0;
 }
 
 function am4RtePriceLabels(fields) {
     if (!fields) return 'none';
     if (fields.cargo) return 'L=' + (fields.l.value || '') + ' H=' + (fields.h.value || '');
+    if (fields.charter || (typeof am4IsCharter === 'function' && am4IsCharter())) {
+        return 'Y=' + (fields.y.value || '') + ' J=' + (fields.j.value || '');
+    }
     return 'Y=' + (fields.y.value || '') + ' J=' + (fields.j.value || '') + ' F=' + (fields.f.value || '');
 }
 
@@ -12550,7 +14440,8 @@ function am4RteApplyCreationPrices() {
     if (!panel || !am4RtePricesReady(fields)) return false;
     if (fields.cargo) {
         if (am4AlreadyPriced(fields.l) || am4AlreadyPriced(fields.h)) return true;
-    } else if (am4AlreadyPriced(fields.y) || am4AlreadyPriced(fields.j) || am4AlreadyPriced(fields.f)) {
+    } else if (am4AlreadyPriced(fields.y) || am4AlreadyPriced(fields.j) ||
+        (fields.f && am4AlreadyPriced(fields.f))) {
         return true;
     }
     return am4ApplyPriceMultipliers(panel,'research create');
@@ -13322,34 +15213,67 @@ function am4FleetOnCheckRoute(onDone) {
     var info = document.getElementById('am4RteInfo');
     if (info) info.innerHTML = '';
     if (!p) { am4FleetSetRouteMsg('Pick an aircraft at base first.','#ef4444'); done(null); return; }
+    if (/Maintenance/i.test(p.status || '')) {
+        am4FleetSetRouteMsg('This plane is still in Maintenance (modify timer). Wait until it returns to Parked, then Check again.','#f59e0b');
+        done(null);
+        return;
+    }
     var air = am4FleetResolveAirport((document.getElementById('am4RteDest') || {}).value);
     if (!air) { am4FleetSetRouteMsg('Pick a researched destination from the list, then Check route.','#ef4444'); done(null); return; }
     am4FleetSetRouteMsg('Reading the route from the game…','#38bdf8');
     am4FleetFetchRouteConfig(p.planeId, air.Id).then(function (rc) {
         if (!rc || (!rc.hasCreate && !p.reroute)) { am4FleetSetRouteMsg('The game did not return a valid route panel for this plane/destination.','#ef4444'); done(null); return; }
-        var isCargo = !!(p.cargo || (rc.looksCargo) || (rc.nativePrices && rc.nativePrices.type === 'cargo'));
+        var isCargo = !!(p.cargo || (rc.looksCargo) || (rc.nativePrices && rc.nativePrices.type === 'cargo') ||
+            (typeof am4FleetRowLooksCargo === 'function' && am4FleetRowLooksCargo(p)));
+        if (isCargo) p.cargo = true;
         var cfg = { y: p.y, j: p.j, f: p.f };
         var range = rc.rangeKm || am4AircraftRangeKm();
         var fill = (!isCargo && rc.demand) ? am4FleetSeatFill(cfg, rc.demand) : null;
         var blockers = [];
         var prices = am4FleetPricePlan(rc, isCargo);
-        var zeroSeatClass = !isCargo && (p.y <= 0 || p.j <= 0 || p.f <= 0);
-        if (zeroSeatClass) blockers.push('plane has a 0-seat class (Y' + p.y + ' J' + p.j + ' F' + p.f + ') — the game needs all 3 classes > 0; reconfigure it first');
+        var zeroSeatClass = !isCargo && !am4FleetPlaneRoutableForRoute(p);
+        var charterPlane = !isCargo && typeof am4FleetPaxIsCharterLayout === 'function' &&
+            am4FleetPaxIsCharterLayout(null, p);
+        if (zeroSeatClass) blockers.push(charterPlane || (typeof am4IsCharter === 'function' && am4IsCharter())
+            ? ('plane needs Economy+Business seats (Y' + p.y + ' J' + p.j + ') — reconfigure it first')
+            : ('plane has a 0-seat class (Y' + p.y + ' J' + p.j + ' F' + p.f + ') — the game needs all 3 classes > 0; reconfigure it first'));
         if (rc.distKm && rc.distKm > range) blockers.push('distance ' + rc.distKm.toLocaleString() + ' km exceeds the plane range ' + range.toLocaleString() + ' km');
         if (!prices) blockers.push(isCargo
             ? 'the game did not provide readable Large/Heavy cargo ticket prices'
             : 'the game did not provide readable base ticket prices; route creation is blocked rather than submitting guessed prices');
         var seatCap = am4FleetPlaneSeatCap(p);
         var stratN = (typeof am4StratLoadCfg === 'function') ? am4StratLoadCfg().n : 2;
-        var seatFix = (!isCargo && zeroSeatClass) ? am4FleetRouteTargetSeats(rc.demand, seatCap, stratN) : null;
+        // Prefer Explorer scan seating for this dest; fall back to Strategy demand fill.
+        // Always offer a fix when current seats ≠ that config (not only when a class is 0).
+        var desired = (!isCargo)
+            ? am4FleetRouteDesiredSeats(p, rc.demand, air.Id, charterPlane)
+            : null;
+        var cargoDesired = isCargo ? am4FleetRouteDesiredCargo(air.Id) : null;
+        var seatMismatch = !!(desired && !am4FleetSeatsMatch(
+            { y: p.y, j: p.j, f: p.f }, desired, desired.charter || charterPlane));
+        var seatFix = (!isCargo && (zeroSeatClass || seatMismatch)) ? desired : null;
         var rows = [];
         rows.push("<div><b>" + am4FleetEsc(rc.hubIcao || '?') +"</b> &rarr; <b>" + am4FleetEsc(rc.destIcao || air.icao || '') +"</b> " + am4FleetEsc(air.name || '') +"</div>");
         rows.push("<div>" + (rc.distKm ? rc.distKm.toLocaleString() : '?') +" km / range " + range.toLocaleString() +" km &middot; " + (rc.speedKph || '?') +" kph &middot; A/C on route " + (rc.acOnRoute == null ?'?' : rc.acOnRoute) +"</div>");
         if (isCargo) {
-            rows.push("<div style='color:#7dd3fc;'>Freighter — Large/Heavy cargo route (no Y/J/F seats required)</div>");
+            rows.push("<div style='color:#7dd3fc;'>Freighter — Large/Heavy cargo route (no Y/J/F seats)</div>");
             if (prices) {
                 rows.push("<div>Ticket targets L $" + prices.l + " / H $" + prices.h +
                     " (" + am4FleetEsc(prices.source || 'auto') + " × multipliers)</div>");
+            }
+            if (cargoDesired) {
+                rows.push("<div style='color:#38bdf8; margin-top:4px;'>Suggested cargo (" +
+                    (cargoDesired.source === 'explorer' ? 'Explorer scan' : 'demand') + "): " +
+                    "<b>L" + cargoDesired.l + "% / H" + cargoDesired.h + "%</b>" +
+                    " — Prep &amp; create will apply this before routing</div>");
+                am4FleetRouteSeatFix = {
+                    planeId: p.planeId, destId: String(air.Id), cargo: true,
+                    pct: { l: cargoDesired.l, h: cargoDesired.h },
+                    source: cargoDesired.source || 'explorer', estCost: 0
+                };
+            } else {
+                rows.push("<div style='color:#f59e0b;'>No Explorer L/H cached for this dest — scan as cargo in Explorer, or set holds in Modify.</div>");
+                am4FleetRouteSeatFix = null;
             }
         } else if (rc.demand && fill) {
             rows.push("<div>Demand/day Y" + rc.demand.y +" J" + rc.demand.j +" F" + rc.demand.f +" &middot; per flight Y" + fill.perFlight.y +" J" + fill.perFlight.j +" F" + fill.perFlight.f +"</div>");
@@ -13359,18 +15283,25 @@ function am4FleetOnCheckRoute(onDone) {
         }
         if (rc.acOnRoute && rc.acOnRoute > 0) rows.push("<div style='color:#f59e0b;'>&#9888; " + rc.acOnRoute +" A/C already on this route — use a distinct route name for a 2nd plane (e.g. add \"-2\").</div>");
         if (blockers.length) rows.push("<div style='color:#ef4444;'>&#10006; " + am4FleetEsc(blockers.join('; ')) +"</div>");
-        if (zeroSeatClass && seatFix) {
-            var estCost = Math.max(0, seatFix.j - (p.j || 0)) * 8000 + Math.max(0, seatFix.f - (p.f || 0)) * 16000;
-            rows.push("<div style='color:#38bdf8; margin-top:4px;'>Suggested seats (Strategy " + stratN + " demand, " + seatCap + " slots): " +
-                "<b>Y" + seatFix.y + " J" + seatFix.j + " F" + seatFix.f + "</b>" +
+        if (!isCargo && seatFix) {
+            var estCost = Math.max(0, seatFix.j - (p.j || 0)) * 8000 +
+                Math.max(0, (charterPlane ? 0 : seatFix.f) - (p.f || 0)) * 16000;
+            var srcLbl = seatFix.source === 'explorer'
+                ? 'Explorer scan'
+                : ('Strategy ' + stratN + ' demand');
+            rows.push("<div style='color:#38bdf8; margin-top:4px;'>Suggested seats (" + srcLbl + ", " + seatCap + " slots): " +
+                "<b>Y" + seatFix.y + " J" + seatFix.j +
+                (charterPlane ? '' : (' F' + seatFix.f)) + "</b>" +
+                (seatMismatch && !zeroSeatClass ? ' · differs from current' : '') +
                 (estCost > 0 ? (" · seat cost ~$" + estCost.toLocaleString()) : '') + "</div>");
             rows.push("<div class='am4-exp-btnrow' style='margin-top:6px;'>" +
                 "<button id='am4RteReconfig' style='cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:12px; font-weight:bold; background:#1e3a5f; color:#7dd3fc;'>Reconfigure seats</button>" +
-                "<span style='font-size:10px; color:#64748b; margin-left:8px;'>starts modify timer — then Check route again</span></div>");
+                "<span style='font-size:10px; color:#64748b; margin-left:8px;'>or use Prep &amp; create route</span></div>");
             am4FleetRouteSeatFix = {
-                planeId: p.planeId, destId: String(air.Id), seats: seatFix, estCost: estCost
+                planeId: p.planeId, destId: String(air.Id), seats: seatFix, estCost: estCost,
+                charter: !!charterPlane, source: seatFix.source || 'demand'
             };
-        } else {
+        } else if (!isCargo) {
             am4FleetRouteSeatFix = null;
         }
         if (info) info.innerHTML = rows.join('');
@@ -13382,7 +15313,7 @@ function am4FleetOnCheckRoute(onDone) {
             return;
         }
         am4FleetRouteCheck = {
-            planeId: p.planeId, destId: String(air.Id), destIcao: rc.destIcao || air.icao || '',
+            planeId: String(p.planeId), destId: String(air.Id), destIcao: rc.destIcao || air.icao || '',
             hubIcao: rc.hubIcao || '?', distKm: rc.distKm || 0, rangeKm: range,
             acOnRoute: rc.acOnRoute || 0,
             willFill: fill ? (fill.warnings.length === 0) : true,
@@ -13392,7 +15323,20 @@ function am4FleetOnCheckRoute(onDone) {
             reroute: !!p.reroute,
             oldRouteId: p.oldRouteId || null
         };
-        am4FleetSetRouteMsg('Route looks valid — review, then Create route.','#10b981');
+        // Force route name = dest ICAO (or dest-N) — renames the aircraft on create.
+        am4FleetApplyDestRouteName(rc.acOnRoute || 0);
+        if (isCargo && cargoDesired) {
+            am4FleetSetRouteMsg('Cargo route OK — Prep & create will apply Explorer L' +
+                cargoDesired.l + '%/H' + cargoDesired.h + '% if holds differ.','#10b981');
+        } else if (!isCargo && seatMismatch && seatFix) {
+            am4FleetSetRouteMsg('Route OK, but seats differ from ' +
+                (seatFix.source === 'explorer' ? 'Explorer' : 'demand') +
+                ' (Y' + p.y + '/' + p.j + '/' + p.f + ' → Y' + seatFix.y + '/' + seatFix.j +
+                (charterPlane ? '' : ('/' + seatFix.f)) +
+                '). Use Prep & create or Reconfigure seats.','#f59e0b');
+        } else {
+            am4FleetSetRouteMsg('Route looks valid — review, then Create route.','#10b981');
+        }
         var btn = document.getElementById('am4RteCreate');
         if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
         done(am4FleetRouteCheck);
@@ -13416,10 +15360,12 @@ function am4FleetOnReconfigureForRoute() {
         return;
     }
     var seats = fix.seats;
-    if (!seats || seats.y <= 0 || seats.j <= 0 || seats.f <= 0) {
+    var needF = !(fix.charter || (typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(null, p)));
+    if (!seats || seats.y <= 0 || seats.j <= 0 || (needF && seats.f <= 0)) {
         am4FleetSetRouteMsg('No valid seat suggestion — try Check route again.','#ef4444');
         return;
     }
+    if (!needF) seats.f = 0;
     am4FleetSetRouteMsg('Reading modify panel…','#38bdf8');
     am4FleetFetchModifyInfo(p.planeId).then(function (info) {
         if (!info || !info.looksValid) {
@@ -13502,7 +15448,7 @@ function am4FleetSubmitCheckedRoute(p, chk, reg, ci) {
         }).then(function () {
             return am4FleetListAllRows(true);
         }).then(function (rows) {
-            var row = rows.filter(function (x) { return x.planeId === p.planeId; })[0];
+            var row = rows.filter(function (x) { return String(x.planeId) === String(p.planeId); })[0];
             if (!row || !/Grounded/i.test(row.status)) {
                 throw new Error('the existing route did not enter Grounded state');
             }
@@ -13543,14 +15489,22 @@ function am4FleetSubmitCheckedRoute(p, chk, reg, ci) {
 }
 
 // Manual, hard-gated create. Fails closed on every gate; only the acting tab may create.
-function am4FleetOnCreateClick() {
+function am4FleetOnCreateClick(opts) {
+    opts = opts || {};
     var chk = am4FleetRouteCheck;
     if (!chk) { am4FleetSetRouteMsg('Press "Check route" first.','#ef4444'); return; }
     var p = am4FleetSelectedParked();
-    if (!p || p.planeId !== chk.planeId) { am4FleetSetRouteMsg('Plane changed — press "Check route" again.','#ef4444'); return; }
+    if (!p || String(p.planeId) !== String(chk.planeId)) { am4FleetSetRouteMsg('Plane changed — press "Check route" again.','#ef4444'); return; }
     var air = am4FleetResolveAirport((document.getElementById('am4RteDest') || {}).value);
-    if (!air || String(air.Id) !== chk.destId) { am4FleetSetRouteMsg('Destination changed — press "Check route" again.','#ef4444'); return; }
+    if (!air || String(air.Id) !== String(chk.destId)) { am4FleetSetRouteMsg('Destination changed — press "Check route" again.','#ef4444'); return; }
     var reg = String((document.getElementById('am4RteReg') || {}).value || '').trim();
+    // Always prefer dest-ICAO naming on create (same as Auto-Build).
+    var wantReg = am4FleetRouteNameForDest(chk.destIcao || air.icao || '', chk.acOnRoute || 0);
+    if (!reg || (chk.destIcao && !am4BuildRegMatchesDest(reg, chk.destIcao))) {
+        reg = wantReg;
+        var regEl = document.getElementById('am4RteReg');
+        if (regEl) regEl.value = reg;
+    }
     if (!reg) { am4FleetSetRouteMsg('Route name (reg) is required.','#ef4444'); return; }
     var ci = parseInt((document.getElementById('am4RteCi') || {}).value, 10);
     if (!isFinite(ci) || ci < 0 || ci > 200) ci = AM4_FLEET_ROUTE_CI_DEFAULT;
@@ -13558,34 +15512,568 @@ function am4FleetOnCreateClick() {
     if (typeof am4CanMutate === 'function' && !am4CanMutate()) { am4FleetSetRouteMsg('Blocked: another tab is the acting tab.','#ef4444'); return; }
     var isCargo = !!(chk.cargo || p.cargo);
     if (!isCargo) {
-        if (p.y <= 0 || p.j <= 0 || p.f <= 0) { am4FleetSetRouteMsg('Blocked: plane has a 0-seat class — the game requires all 3 > 0.','#ef4444'); return; }
-        if (p.y + 2 * p.j + 3 * p.f > am4AircraftSeats()) { am4FleetSetRouteMsg('Blocked: seat config exceeds the ' + am4AircraftSeats() + '-slot capacity.','#ef4444'); return; }
+        if (!am4FleetPlaneRoutableForRoute(p)) {
+            am4FleetSetRouteMsg((typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(null, p)) || am4IsCharter()
+                ? 'Blocked: charter needs Economy + Business seats > 0.'
+                : 'Blocked: plane has a 0-seat class — the game requires all 3 > 0.','#ef4444');
+            return;
+        }
+        var slots = (typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(null, p))
+            ? (p.y + 2 * p.j) : (p.y + 2 * p.j + 3 * p.f);
+        if (slots > am4AircraftSeats()) { am4FleetSetRouteMsg('Blocked: seat config exceeds the ' + am4AircraftSeats() + '-slot capacity.','#ef4444'); return; }
     }
     if (chk.distKm && chk.rangeKm && chk.distKm > chk.rangeKm) { am4FleetSetRouteMsg('Blocked: distance exceeds the plane range.','#ef4444'); return; }
     if (typeof getBankBalance === 'function') { var bal = getBankBalance(); if (bal && bal < 5000000) { am4FleetSetRouteMsg('Blocked: balance too low for the route fee.','#ef4444'); return; } }
 
     var seatLine = isCargo
         ? 'Freighter Large/Heavy cargo prices (configured multipliers applied).'
-        : ('Seats Y' + p.y + ' J' + p.j + ' F' + p.f + ' (the plane\'s own config), cost index ' + ci + '.');
-    if (!window.confirm((chk.reroute ?'Replace the existing route with ' : 'Create route ') + chk.hubIcao + ' → ' + chk.destIcao + ' with ' + (p.reg || p.planeId) + '?\n\n' +
-        seatLine + '\n' +
-        'This spends in-game cash — a route fee (~$1.5M).' +
-        (chk.reroute ?'\n\nThe current route is grounded only after the aircraft is re-confirmed at home; it is restored if creation fails.' : '') +
-        '\n\nConfigured ticket-price multipliers are applied automatically.')) {
-        am4FleetSetRouteMsg('Cancelled.','#94a3b8');
-        return;
+        : ((typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(null, p))
+            ? ('Seats Y' + p.y + ' J' + p.j + ' (charter), cost index ' + ci + '.')
+            : ('Seats Y' + p.y + ' J' + p.j + ' F' + p.f + ' (the plane\'s own config), cost index ' + ci + '.'));
+    if (!opts.skipConfirm) {
+        if (!window.confirm((chk.reroute ?'Replace the existing route with ' : 'Create route ') + chk.hubIcao + ' → ' + chk.destIcao + ' with ' + (p.reg || p.planeId) + '?\n\n' +
+            seatLine + '\n' +
+            'This spends in-game cash — a route fee (~$1.5M).' +
+            (chk.reroute ?'\n\nThe current route is grounded only after the aircraft is re-confirmed at home; it is restored if creation fails.' : '') +
+            '\n\nConfigured ticket-price multipliers are applied automatically.')) {
+            am4FleetSetRouteMsg('Cancelled.','#94a3b8');
+            return;
+        }
     }
     am4FleetResetCreateBtn(); // one create per check; a fresh check is needed for another
     am4FleetSetRouteMsg((chk.reroute ?'Re-confirming aircraft at home, then rerouting ' : 'Creating route ') +
         chk.hubIcao + ' → ' + chk.destIcao + '…','#38bdf8');
     am4FleetSubmitCheckedRoute(p, chk, reg, ci).then(function (result) {
         am4FleetSetRouteMsg('✓ Route ' + (result.replaced ?'replaced' : 'created') + ' — ' +
-            (p.reg || p.planeId) + ' is routed with multiplied ticket prices.','#10b981');
+            reg + ' is routed with multiplied ticket prices.','#10b981');
         am4FleetRenderState();
         am4FleetRenderParkedPicker();
+        if (typeof am4FleetPrepQueueRemovePlane === 'function') {
+            am4FleetPrepQueueRemovePlane(String(p.planeId), 'routed');
+        } else if (typeof am4FleetPrepCreateClear === 'function') {
+            am4FleetPrepCreateClear('routed');
+        }
     }).catch(function (e) {
         am4FleetSetRouteMsg('Route not changed: ' + String(e && e.message ? e.message : e),'#ef4444');
     });
+}
+
+//================================================================================
+// Prep & create route queue: modify (if needed) → wait for Parked → Check → Create.
+// Multiple plane→dest jobs can wait in parallel (A380-800F seats ~4h; upgrades up to ~8h).
+//================================================================================
+var AM4_FLEET_PREP_KEY = 'am4FleetPrepCreateJob'; // legacy single-job (migrated)
+var AM4_FLEET_PREP_QUEUE_KEY = 'am4FleetPrepCreateQueue';
+var AM4_FLEET_PREP_MAX_MS = 10 * 60 * 60 * 1000; // 10h — covers 8h mods + buffer
+var am4FleetPrepTimer = null;
+var am4FleetPrepBusy = false;
+
+function am4FleetPrepQueueLoad() {
+    try {
+        var raw = JSON.parse(localStorage.getItem(AM4_FLEET_PREP_QUEUE_KEY) || 'null');
+        if (Array.isArray(raw)) {
+            return raw.filter(function (j) { return j && j.planeId && j.destId; });
+        }
+        // Migrate legacy single job
+        var old = JSON.parse(localStorage.getItem(AM4_FLEET_PREP_KEY) || 'null');
+        if (old && old.planeId && old.destId) {
+            old.id = old.id || ('p' + Date.now());
+            old.state = old.state || 'waiting';
+            localStorage.removeItem(AM4_FLEET_PREP_KEY);
+            am4FleetPrepQueueSave([old]);
+            return [old];
+        }
+    } catch (e) { /* ignore */ }
+    return [];
+}
+function am4FleetPrepQueueSave(q) {
+    try {
+        if (q && q.length) localStorage.setItem(AM4_FLEET_PREP_QUEUE_KEY, JSON.stringify(q));
+        else localStorage.removeItem(AM4_FLEET_PREP_QUEUE_KEY);
+    } catch (e) { /* ignore */ }
+}
+/** @deprecated single-job API — prefer queue helpers */
+function am4FleetPrepCreateLoad() {
+    var q = am4FleetPrepQueueLoad();
+    return q.length ? q[0] : null;
+}
+function am4FleetPrepCreateSave(job) {
+    if (!job) { am4FleetPrepQueueSave([]); return; }
+    am4FleetPrepQueueAdd(job);
+}
+function am4FleetPrepQueueAdd(job) {
+    if (!job || !job.planeId || !job.destId) return null;
+    var q = am4FleetPrepQueueLoad();
+    var pid = String(job.planeId);
+    if (q.some(function (j) { return String(j.planeId) === pid; })) {
+        am4FleetSetRouteMsg('That plane is already in the prep queue.','#f59e0b');
+        am4FleetPrepQueueRender();
+        return null;
+    }
+    job.id = job.id || ('p' + Date.now() + Math.floor(Math.random() * 1000));
+    job.state = job.state || 'waiting';
+    job.at = job.at || Date.now();
+    q.push(job);
+    am4FleetPrepQueueSave(q);
+    am4FleetPrepQueueRender();
+    am4FleetPrepCreateShowCancel(true);
+    return job;
+}
+function am4FleetPrepQueueRemoveId(id, note) {
+    var q = am4FleetPrepQueueLoad().filter(function (j) { return String(j.id) !== String(id); });
+    am4FleetPrepQueueSave(q);
+    am4FleetPrepBusy = false;
+    am4FleetPrepQueueRender();
+    if (!q.length) {
+        am4FleetPrepCreateShowCancel(false);
+        if (am4FleetPrepTimer) { clearInterval(am4FleetPrepTimer); am4FleetPrepTimer = null; }
+    }
+    if (note === 'removed') am4FleetSetRouteMsg('Removed from prep queue.','#94a3b8');
+    return q;
+}
+function am4FleetPrepQueueRemovePlane(planeId, note) {
+    var pid = String(planeId || '');
+    var q = am4FleetPrepQueueLoad();
+    var next = q.filter(function (j) { return String(j.planeId) !== pid; });
+    if (next.length === q.length) return q;
+    am4FleetPrepQueueSave(next);
+    am4FleetPrepBusy = false;
+    am4FleetPrepQueueRender();
+    if (!next.length) {
+        am4FleetPrepCreateShowCancel(false);
+        if (am4FleetPrepTimer) { clearInterval(am4FleetPrepTimer); am4FleetPrepTimer = null; }
+    }
+    if (note === 'routed' && next.length) {
+        am4FleetSetRouteMsg('✓ Routed — ' + next.length + ' prep job(s) still waiting…','#10b981');
+        am4FleetPrepCreateStartWatch();
+    }
+    return next;
+}
+function am4FleetPrepCreateClear(note) {
+    am4FleetPrepQueueSave([]);
+    am4FleetPrepBusy = false;
+    am4FleetPrepCreateShowCancel(false);
+    am4FleetPrepQueueRender();
+    if (am4FleetPrepTimer) { clearInterval(am4FleetPrepTimer); am4FleetPrepTimer = null; }
+    void note;
+}
+function am4FleetPrepCreateCancel() {
+    var n = am4FleetPrepQueueLoad().length;
+    am4FleetPrepCreateClear('cancelled');
+    am4FleetSetRouteMsg(n ? ('Prep queue cleared (' + n + ').') : 'Prep queue empty.','#94a3b8');
+}
+function am4FleetPrepCreateShowCancel(on) {
+    var cancelBtn = document.getElementById('am4RtePrepCancel');
+    if (cancelBtn) cancelBtn.style.display = on ? '' : 'none';
+}
+function am4FleetPrepQueueRender() {
+    var el = document.getElementById('am4RtePrepQueue');
+    if (!el) return;
+    var q = am4FleetPrepQueueLoad();
+    am4FleetPrepCreateShowCancel(q.length > 0);
+    if (!q.length) { el.innerHTML = ''; return; }
+    var rows = ["<div style='color:#7dd3fc; font-weight:bold; margin-bottom:2px;'>Prep queue (" + q.length +
+        ") — waits up to 10h per job</div>"];
+    q.forEach(function (j, i) {
+        var ageH = Math.max(0, (Date.now() - (j.at || Date.now())) / 3600000);
+        var ageTxt = ageH < 1 ? (Math.round(ageH * 60) + 'm') : (ageH.toFixed(1) + 'h');
+        var dest = j.destIcao || j.destId || '?';
+        rows.push("<div style='display:flex; gap:6px; align-items:center; flex-wrap:wrap;'>" +
+            "<span>" + (i + 1) + ". " + am4FleetEsc(j.regHint || j.planeId) + " → " +
+            am4FleetEsc(String(dest)) + " · " + am4FleetEsc(j.state || 'waiting') +
+            " · " + ageTxt + "</span>" +
+            "<button type='button' data-prep-rm='" + am4FleetEsc(String(j.id)) +
+            "' style='cursor:pointer; border:none; border-radius:3px; padding:1px 6px; font-size:9px; background:#334155; color:#fca5a5;'>×</button></div>");
+    });
+    el.innerHTML = rows.join('');
+}
+
+function am4FleetPrepCreateResume() {
+    var q = am4FleetPrepQueueLoad();
+    if (!q.length) { am4FleetPrepQueueRender(); return; }
+    am4FleetPrepCreateShowCancel(true);
+    am4FleetPrepQueueRender();
+    am4FleetSetRouteMsg('Resuming prep queue (' + q.length + ') — waiting for Parked after modify…','#38bdf8');
+    am4FleetPrepCreateStartWatch();
+}
+
+function am4FleetPrepCreateStartWatch() {
+    am4FleetPrepQueueRender();
+    if (am4FleetPrepTimer) return;
+    am4FleetPrepTimer = setInterval(function () {
+        try { am4FleetPrepCreateTick(); } catch (eTick) { /* ignore */ }
+    }, 12000);
+    setTimeout(function () {
+        try { am4FleetPrepCreateTick(); } catch (e0) { /* ignore */ }
+    }, 2500);
+}
+
+function am4FleetPrepCreateTick() {
+    var q = am4FleetPrepQueueLoad();
+    if (!q.length) {
+        if (am4FleetPrepTimer) { clearInterval(am4FleetPrepTimer); am4FleetPrepTimer = null; }
+        am4FleetPrepCreateShowCancel(false);
+        am4FleetPrepQueueRender();
+        return;
+    }
+    if (am4FleetPrepBusy) return;
+
+    var now = Date.now();
+    var kept = [];
+    var expired = 0;
+    q.forEach(function (j) {
+        if (now - (j.at || 0) > AM4_FLEET_PREP_MAX_MS) expired++;
+        else kept.push(j);
+    });
+    if (expired) {
+        am4FleetPrepQueueSave(kept);
+        am4FleetPrepQueueRender();
+        am4FleetSetRouteMsg('Prep: dropped ' + expired + ' expired job(s) (modify wait > 10h).','#ef4444');
+        q = kept;
+        if (!q.length) {
+            if (am4FleetPrepTimer) { clearInterval(am4FleetPrepTimer); am4FleetPrepTimer = null; }
+            am4FleetPrepCreateShowCancel(false);
+            return;
+        }
+    }
+
+    if (typeof am4CanMutate === 'function' && !am4CanMutate()) return;
+    if (typeof am4SuiteResearchBusy === 'function' && am4SuiteResearchBusy()) return;
+
+    am4FleetPrepBusy = true;
+    am4FleetSetRouteMsg('Prep queue: checking ' + q.length + ' job(s)…','#38bdf8');
+    am4FleetListRouteCandidates(true).then(function (rows) {
+        var ready = null;
+        var waiting = 0;
+        var i;
+        for (i = 0; i < q.length; i++) {
+            var job = q[i];
+            var p = (rows || []).filter(function (r) { return String(r.planeId) === String(job.planeId); })[0];
+            if (!p) { waiting++; continue; }
+            if (/Maintenance/i.test(p.status || '')) { waiting++; continue; }
+            if (!job.cargo && !am4FleetPlaneRoutableForRoute(p)) {
+                am4FleetSetRouteMsg('Prep: ' + (job.regHint || job.planeId) +
+                    ' is back but seats still not routable — removed.','#ef4444');
+                am4FleetPrepQueueRemoveId(job.id, 'bad seats');
+                am4FleetPrepBusy = false;
+                return;
+            }
+            ready = { job: job, p: p };
+            break;
+        }
+        if (!ready) {
+            am4FleetSetRouteMsg('Prep queue: waiting for modify timer(s) — ' +
+                waiting + ' in Maintenance / not at base…','#f59e0b');
+            am4FleetPrepBusy = false;
+            am4FleetPrepQueueRender();
+            return;
+        }
+        var job = ready.job;
+        var p = ready.p;
+        var planeSel = document.getElementById('am4RtePlane');
+        var destSel = document.getElementById('am4RteDest');
+        var regEl = document.getElementById('am4RteReg');
+        var ciEl = document.getElementById('am4RteCi');
+        if (planeSel) {
+            planeSel.value = String(job.planeId);
+            if (planeSel.value !== String(job.planeId)) {
+                var opt = document.createElement('option');
+                opt.value = String(job.planeId);
+                opt.text = (p.reg || p.planeId) +
+                    (p.cargo ? ' (cargo)' : (' (' + (p.y || 0) + '/' + (p.j || 0) +
+                        ((typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(null, p))
+                            ? '' : ('/' + (p.f || 0))) + ')'));
+                planeSel.appendChild(opt);
+                planeSel.value = String(job.planeId);
+            }
+        }
+        if (destSel) destSel.value = String(job.destId);
+        if (regEl && job.reg) regEl.value = job.reg;
+        if (ciEl && job.ci != null) ciEl.value = String(job.ci);
+        am4FleetParkedCache = rows;
+        var qMark = am4FleetPrepQueueLoad();
+        qMark.forEach(function (j) {
+            if (String(j.id) === String(job.id)) j.state = 'creating';
+        });
+        am4FleetPrepQueueSave(qMark);
+        am4FleetPrepQueueRender();
+        am4FleetSetRouteMsg('Prep: ' + (job.regHint || job.planeId) + ' Parked — checking route…','#38bdf8');
+        return new Promise(function (resolve) {
+            am4FleetOnCheckRoute(function (chk) { resolve(chk); });
+        }).then(function (chk) {
+            if (!chk) {
+                am4FleetSetRouteMsg('Prep: Check route failed for ' + (job.regHint || job.planeId) +
+                    ' — removed from queue.','#ef4444');
+                am4FleetPrepQueueRemoveId(job.id, 'check failed');
+                am4FleetPrepBusy = false;
+                return;
+            }
+            am4FleetSetRouteMsg('Prep: creating route for ' + (job.regHint || job.planeId) + '…','#38bdf8');
+            am4FleetOnCreateClick({ skipConfirm: true });
+            am4FleetPrepBusy = false;
+        });
+    }).catch(function (e) {
+        am4FleetPrepBusy = false;
+        am4FleetSetRouteMsg('Prep watch error: ' + String(e && e.message ? e.message : e),'#ef4444');
+    });
+}
+
+function am4FleetOnPrepCreateClick() {
+    try {
+    var p = am4FleetSelectedParked();
+    if (!p) { am4FleetSetRouteMsg('Pick an aircraft at base first.','#ef4444'); return; }
+    if (/Maintenance/i.test(p.status || '')) {
+        am4FleetSetRouteMsg('Plane is in Maintenance — wait until Parked, or clear it from the prep queue.','#f59e0b');
+        return;
+    }
+    var air = am4FleetResolveAirport((document.getElementById('am4RteDest') || {}).value);
+    if (!air) { am4FleetSetRouteMsg('Pick a researched destination first.','#ef4444'); return; }
+    if (typeof am4CanMutate === 'function' && !am4CanMutate()) {
+        am4FleetSetRouteMsg('Blocked: another tab is the acting tab.','#ef4444');
+        return;
+    }
+    if (typeof am4SuiteResearchBusy === 'function' && am4SuiteResearchBusy()) {
+        am4FleetSetRouteMsg('Blocked: Research is creating a route.','#ef4444');
+        return;
+    }
+    var qNow = am4FleetPrepQueueLoad();
+    if (qNow.some(function (j) { return String(j.planeId) === String(p.planeId); })) {
+        am4FleetSetRouteMsg('That plane is already in the prep queue.','#f59e0b');
+        am4FleetPrepQueueRender();
+        am4FleetPrepCreateStartWatch();
+        return;
+    }
+
+    am4FleetSetRouteMsg('Prep: checking route…','#38bdf8');
+    am4FleetOnCheckRoute(function (chk) {
+        var fix = am4FleetRouteSeatFix;
+        var needSeats = !!(fix && String(fix.planeId) === String(p.planeId) && !fix.cargo);
+        var ci = parseInt((document.getElementById('am4RteCi') || {}).value, 10);
+        if (!isFinite(ci) || ci < 0 || ci > 200) ci = AM4_FLEET_ROUTE_CI_DEFAULT;
+        var reg = String((document.getElementById('am4RteReg') || {}).value || '').trim();
+        if (chk) {
+            var wantReg = am4FleetRouteNameForDest(chk.destIcao || air.icao || '', chk.acOnRoute || 0);
+            if (!reg || (chk.destIcao && typeof am4BuildRegMatchesDest === 'function' &&
+                !am4BuildRegMatchesDest(reg, chk.destIcao))) {
+                reg = wantReg;
+                var regEl = document.getElementById('am4RteReg');
+                if (regEl) regEl.value = reg;
+            }
+        }
+        if (!reg) reg = am4FleetRouteNameForDest(air.icao || air.iata || '', 0);
+        var destIcao = (chk && chk.destIcao) || air.icao || air.iata || String(air.Id);
+        var qHint = am4FleetPrepQueueLoad().length
+            ? ('\n\nWill add to prep queue (' + am4FleetPrepQueueLoad().length + ' already waiting).')
+            : '';
+
+        var isCargo = !!(chk && chk.cargo) || !!(p.cargo) ||
+            (typeof am4FleetRowLooksCargo === 'function' && am4FleetRowLooksCargo(p));
+        if (isCargo) {
+            if (!chk) {
+                am4FleetSetRouteMsg('Cannot prep: Check route failed (range / prices / destination).','#ef4444');
+                return;
+            }
+            var cargoWant = (fix && fix.cargo && fix.pct) ? fix.pct : null;
+            if (!cargoWant && typeof am4FleetRouteDesiredCargo === 'function') {
+                cargoWant = am4FleetRouteDesiredCargo(air.Id);
+            }
+            if (!cargoWant || !(cargoWant.l + cargoWant.h > 0)) {
+                if (!window.confirm('Prep & create cargo route ' + (chk.hubIcao || '?') + ' → ' +
+                    (chk.destIcao || '') + ' with ' + (p.reg || p.planeId) + '?\n\n' +
+                    'No Explorer L/H for this dest — will create with the plane\'s current holds.\n' +
+                    'Route fee ~$1.5M (in-game cash).' + qHint)) {
+                    am4FleetSetRouteMsg('Cancelled.','#94a3b8');
+                    return;
+                }
+                am4FleetOnCreateClick({ skipConfirm: true });
+                return;
+            }
+            am4FleetSetRouteMsg('Prep: reading freighter modify panel…','#38bdf8');
+            am4FleetFetchModifyInfo(p.planeId).then(function (info) {
+                if (!info || info.reason === 'away' || info.reason === 'pending') {
+                    am4FleetSetRouteMsg('Prep blocked: plane not at base / pending maintenance.','#ef4444');
+                    return;
+                }
+                info.cargo = true;
+                var curPct = am4FleetCargoCurrentPct(info);
+                if (curPct && am4FleetCargoPctClose(curPct, cargoWant)) {
+                    if (!window.confirm('Prep & create cargo route ' + (chk.hubIcao || '?') + ' → ' +
+                        (chk.destIcao || '') + ' with ' + (p.reg || p.planeId) + '?\n\n' +
+                        'Cargo matches Explorer (L' + curPct.l + '%/H' + curPct.h +
+                        '%) — no modify needed.\n' +
+                        'Route fee ~$1.5M (in-game cash).' + qHint)) {
+                        am4FleetSetRouteMsg('Cancelled.','#94a3b8');
+                        return;
+                    }
+                    am4FleetOnCreateClick({ skipConfirm: true });
+                    return;
+                }
+                var cost = am4FleetModifyCost(info, cargoWant.l, cargoWant.h, false, false, false);
+                if (typeof getBankBalance === 'function') {
+                    var bal = getBankBalance();
+                    if (bal && cost.total > bal) {
+                        am4FleetSetRouteMsg('Blocked: modify cost $' + cost.total.toLocaleString() +
+                            ' exceeds balance.','#ef4444');
+                        return;
+                    }
+                }
+                var curLbl = curPct ? ('L' + curPct.l + '%/H' + curPct.h + '%') : 'current holds';
+                if (!window.confirm('Queue prep & create for ' + (p.reg || p.planeId) + '?\n\n' +
+                    '1) Reconfigure to Explorer cargo: ' + curLbl + ' → L' + cargoWant.l + '%/H' +
+                    cargoWant.h + '%' +
+                    (cost.total > 0 ? (' (~$' + cost.total.toLocaleString() + ' + modify timer)') :
+                        ' (modify timer)') + '\n' +
+                    '2) Wait until Parked (up to 10h)\n' +
+                    '3) Create ' + destIcao + ' (route fee ~$1.5M)' + qHint +
+                    '\n\nYou can queue more planes while this waits.')) {
+                    am4FleetSetRouteMsg('Cancelled.','#94a3b8');
+                    return;
+                }
+                am4FleetSetRouteMsg('Prep: applying cargo L/H modify…','#38bdf8');
+                return am4FleetApplyCargoModifyViaGame(p.planeId, cargoWant.l, cargoWant.h,
+                    !!info.mod1on, !!info.mod2on, !!info.mod3on).then(function (res) {
+                    if (!res || !res.ok) {
+                        am4FleetSetRouteMsg('Prep: cargo modify ' +
+                            (res && res.refused ? 'refused by game' : 'not confirmed') +
+                            (res && res.hint ? (' — ' + res.hint) : '') + '.','#ef4444');
+                        return;
+                    }
+                    var job = {
+                        planeId: String(p.planeId),
+                        destId: String(air.Id),
+                        destIcao: destIcao,
+                        reg: reg,
+                        ci: ci,
+                        cargo: true,
+                        pct: { l: cargoWant.l, h: cargoWant.h },
+                        regHint: p.reg || p.planeId,
+                        at: Date.now(),
+                        state: 'waiting'
+                    };
+                    if (!am4FleetPrepQueueAdd(job)) return;
+                    am4FleetSetRouteMsg('✓ Cargo modify queued (' + am4FleetPrepQueueLoad().length +
+                        ' in queue) — waiting for Parked…','#10b981');
+                    am4FleetRenderParkedPicker();
+                    am4FleetPrepCreateStartWatch();
+                });
+            }).catch(function (e) {
+                am4FleetSetRouteMsg('Prep cargo modify failed: ' +
+                    String(e && e.message ? e.message : e),'#ef4444');
+            });
+            return;
+        }
+
+        if (!needSeats) {
+            var charterGuess = typeof am4FleetPaxIsCharterLayout === 'function' &&
+                am4FleetPaxIsCharterLayout(null, p);
+            var desired = typeof am4FleetRouteDesiredSeats === 'function'
+                ? am4FleetRouteDesiredSeats(p, (chk && chk.demand) || null, air.Id, charterGuess)
+                : null;
+            if (desired && !am4FleetSeatsMatch({ y: p.y, j: p.j, f: p.f }, desired, desired.charter || charterGuess)) {
+                var est = Math.max(0, desired.j - (p.j || 0)) * 8000 +
+                    Math.max(0, (desired.charter || charterGuess ? 0 : desired.f) - (p.f || 0)) * 16000;
+                fix = {
+                    planeId: p.planeId, destId: String(air.Id), seats: desired, estCost: est,
+                    charter: !!(desired.charter || charterGuess), source: desired.source || 'demand'
+                };
+                am4FleetRouteSeatFix = fix;
+                needSeats = true;
+            }
+        }
+
+        if (chk && !needSeats) {
+            var seatNote = 'Seats OK (Y' + (p.y || 0) + '/' + (p.j || 0) + '/' + (p.f || 0) +
+                ') — no modify needed.';
+            if (!window.confirm('Prep & create route ' + (chk.hubIcao || '?') + ' → ' + (chk.destIcao || '') +
+                ' with ' + (p.reg || p.planeId) + '?\n\n' + seatNote + '\n' +
+                'Route fee ~$1.5M (in-game cash).' + qHint)) {
+                am4FleetSetRouteMsg('Cancelled.','#94a3b8');
+                return;
+            }
+            am4FleetOnCreateClick({ skipConfirm: true });
+            return;
+        }
+
+        if (!needSeats || !fix || !fix.seats) {
+            am4FleetSetRouteMsg(chk
+                ? 'Cannot prep: route blocked and no seat fix available.'
+                : 'Cannot prep: Check route failed (range / prices / destination).','#ef4444');
+            return;
+        }
+
+        var seats = fix.seats;
+        var charter = !!(fix.charter || (typeof am4FleetPaxIsCharterLayout === 'function' &&
+            am4FleetPaxIsCharterLayout(null, p)));
+        if (charter) seats.f = 0;
+        if (seats.y <= 0 || seats.j <= 0 || (!charter && seats.f <= 0)) {
+            am4FleetSetRouteMsg('Seat suggestion invalid.','#ef4444');
+            return;
+        }
+
+        var estPax = fix.estCost || 0;
+        var fromSrc = (fix.source === 'explorer') ? 'Explorer seating' : 'demand seating';
+        if (!window.confirm('Queue prep & create for ' + (p.reg || p.planeId) + '?\n\n' +
+            '1) Reconfigure to ' + fromSrc + ': Y' + (p.y || 0) + '/' + (p.j || 0) + '/' + (p.f || 0) +
+            ' → Y' + seats.y + '/' + seats.j + (charter ? '' : ('/' + seats.f)) +
+            (estPax > 0 ? (' (~$' + estPax.toLocaleString() + ' + modify timer)') : ' (modify timer)') + '\n' +
+            '2) Wait until Parked (up to 10h; A380-800F seats ~4h)\n' +
+            '3) Create ' + destIcao + ' (route fee ~$1.5M)' + qHint +
+            '\n\nYou can queue more planes while this waits.')) {
+            am4FleetSetRouteMsg('Cancelled.','#94a3b8');
+            return;
+        }
+
+        am4FleetSetRouteMsg('Prep: reading modify panel…','#38bdf8');
+        am4FleetFetchModifyInfo(p.planeId).then(function (info) {
+            if (!info || info.reason === 'away' || info.reason === 'pending') {
+                am4FleetSetRouteMsg('Prep blocked: plane not at base / pending maintenance.','#ef4444');
+                return;
+            }
+            if (info.cargo) {
+                am4FleetSetRouteMsg('Prep: this plane reads as freighter — use Prep again (cargo path).','#ef4444');
+                return;
+            }
+            var cost = am4FleetModifyCost(info, seats.j, charter ? 0 : seats.f, false, false, false);
+            if (typeof getBankBalance === 'function') {
+                var bal2 = getBankBalance();
+                if (bal2 && cost.total > bal2) {
+                    am4FleetSetRouteMsg('Blocked: modify cost $' + cost.total.toLocaleString() + ' exceeds balance.','#ef4444');
+                    return;
+                }
+            }
+            am4FleetSetRouteMsg('Prep: applying seat modify…','#38bdf8');
+            var url = am4FleetBuildModifyUrl(p.planeId, seats.y, seats.j, charter ? 0 : seats.f,
+                !!info.mod1on, !!info.mod2on, !!info.mod3on, false);
+            return fetch(url, { credentials: 'include' }).then(function (r) { return r.text(); }).then(function (body) {
+                if (/too low|not enough|insufficient|denied|invalid|failed/i.test(body || '')) {
+                    am4FleetSetRouteMsg('Prep: game refused the seat change.','#ef4444');
+                    return;
+                }
+                var job = {
+                    planeId: String(p.planeId),
+                    destId: String(air.Id),
+                    destIcao: destIcao,
+                    reg: reg,
+                    ci: ci,
+                    seats: seats,
+                    charter: !!charter,
+                    regHint: p.reg || p.planeId,
+                    at: Date.now(),
+                    state: 'waiting'
+                };
+                if (!am4FleetPrepQueueAdd(job)) return;
+                am4FleetSetRouteMsg('✓ Modify queued (' + am4FleetPrepQueueLoad().length +
+                    ' in queue) — waiting for Parked…','#10b981');
+                am4FleetRenderParkedPicker();
+                am4FleetPrepCreateStartWatch();
+            });
+        }).catch(function (e) {
+            am4FleetSetRouteMsg('Prep modify failed: ' + String(e && e.message ? e.message : e),'#ef4444');
+        });
+    });
+    } catch (ePrep) {
+        am4FleetSetRouteMsg('Prep failed: ' + String(ePrep),'#ef4444');
+    }
 }
 
 //================================================================================
@@ -13612,10 +16100,10 @@ function am4SuiteResearchBusy() {
 function am4FleetParseModifyInfo(html) {
     html = String(html || '');
     var box = document.createElement('div');
-    try { box.innerHTML = html; } catch (e) { box = document.createElement('div'); }
+    try { box.innerHTML = am4FleetStripModifyScripts(html); } catch (e) { box = document.createElement('div'); }
     var jsNum = function (names) {
         for (var i = 0; i < names.length; i++) {
-            var re = new RegExp('(?:var\\s+)?' + names[i] + '\\s*=\\s*(-?[\\d.]+)','i');
+            var re = new RegExp('(?:var\\s+|window\\.)?' + names[i] + '\\s*=\\s*(-?[\\d.]+)','i');
             var m = html.match(re);
             if (!m) continue;
             var x = parseInt(m[1], 10);
@@ -13629,24 +16117,6 @@ function am4FleetParseModifyInfo(html) {
         var x = parseInt(String(el.value || el.getAttribute('value') || '').replace(/[^0-9-]/g,''), 10);
         return isFinite(x) ? x : null;
     };
-    var modOn = function (n) {
-        var v = jsNum(['mod' + n]);
-        if (v === 1) return true;
-        var el = box.querySelector('#mod' + n + ', #acMod' + n + ', input[name="mod' + n + '"]');
-        if (el) {
-            var outer = String(el.outerHTML || '');
-            if (el.checked || /\bchecked\b/i.test(outer)) return true;
-            var host = el.parentElement;
-            var lab = host ? String(host.innerText || '') : '';
-            if (/already|installed|applied|owned|done/i.test(lab)) return true;
-        }
-        var idx = html.search(new RegExp('mod' + n + '(?:cost)?','i'));
-        if (idx >= 0) {
-            var blob = html.slice(idx, idx + 320);
-            if (/(already|installed|applied)/i.test(blob) && new RegExp('mod' + n,'i').test(blob)) return true;
-        }
-        return false;
-    };
     var attrNum = function (name) {
         var re = new RegExp('(?:id|name)=["\']' + name + '["\'][^>]*value=["\'](-?\\d+)','i');
         var m = html.match(re);
@@ -13658,10 +16128,55 @@ function am4FleetParseModifyInfo(html) {
         var x = parseInt(m[1], 10);
         return isFinite(x) ? x : null;
     };
-    var curE = jsNum(['eSeat']); if (curE == null) curE = inpNum('#eSeat, input[name="eSeat"]'); if (curE == null) curE = attrNum('eSeat');
-    var curB = jsNum(['bSeat']); if (curB == null) curB = inpNum('#bSeat, input[name="bSeat"]'); if (curB == null) curB = attrNum('bSeat');
-    var curF = jsNum(['fSeat']); if (curF == null) curF = inpNum('#fSeat, input[name="fSeat"]'); if (curF == null) curF = attrNum('fSeat');
+    var moneyNear = function (labelRe) {
+        var re = new RegExp(labelRe + '[^$]{0,120}\\$\\s*([\\d,]+(?:\\.\\d+)?)','i');
+        var m = html.match(re) || String(box.innerText || '').match(re);
+        if (!m) return 0;
+        var n = parseInt(String(m[1]).replace(/[^0-9]/g, ''), 10);
+        return n > 0 ? n : 0;
+    };
+    var modOn = function (n) {
+        var v = jsNum(['mod' + n]);
+        if (v === 1) return true;
+        var el = box.querySelector('#mod' + n + ', #acMod' + n + ', input[name="mod' + n + '"]');
+        if (el) {
+            var outer = String(el.outerHTML || '');
+            if (el.checked || /\bchecked\b/i.test(outer)) return true;
+            var host = el.parentElement;
+            var lab = host ? String(host.innerText || '') : '';
+            if (/already|installed|applied|owned|done/i.test(lab)) return true;
+            // Installed upgrades are often checked+disabled; disabled alone ≠ installed.
+            if ((el.disabled || /\bdisabled\b/i.test(outer)) && /\bchecked\b/i.test(outer)) return true;
+        }
+        var idx = html.search(new RegExp('(?:id|name)=["\']?(?:ac)?mod' + n + '\\b|mod' + n + 'cost','i'));
+        if (idx < 0) idx = html.search(new RegExp('mod' + n + '\\b','i'));
+        if (idx >= 0) {
+            var blob = html.slice(Math.max(0, idx - 80), idx + 360);
+            if (/(already|installed|applied|owned)/i.test(blob)) return true;
+            if (/glyphicons-ok|text-success|fa-check|✔|✓/i.test(blob) && /mod/i.test(blob)) return true;
+        }
+        return false;
+    };
+    var modCost = function (n, labelRe) {
+        var c = jsNum(['mod' + n + 'cost']);
+        if (c > 0) return c;
+        c = moneyNear(labelRe);
+        return c > 0 ? c : 0;
+    };
+
+    var curE = jsNum(['eSeat']); if (curE == null) curE = inpNum('#eSeat, input[name="eSeat"], #ecoSeat'); if (curE == null) curE = attrNum('eSeat');
+    var curB = jsNum(['bSeat']); if (curB == null) curB = inpNum('#bSeat, input[name="bSeat"], #busSeat'); if (curB == null) curB = attrNum('bSeat');
+    var curF = jsNum(['fSeat']); if (curF == null) curF = inpNum('#fSeat, input[name="fSeat"], #firstSeat'); if (curF == null) curF = attrNum('fSeat');
     var text = String(box.innerText || box.textContent || '').replace(/\s+/g,' ');
+    // Pax seat labels on the modify panel (when JS vars are missing).
+    if (curE == null || curB == null || curF == null) {
+        var yLab = text.match(/(?:Y\s*class|Economy(?:\s*class)?)\s*[:=]?\s*([\d,]+)/i);
+        var jLab = text.match(/(?:J\s*class|Business(?:\s*class)?)\s*[:=]?\s*([\d,]+)/i);
+        var fLab = text.match(/(?:F\s*class|First(?:\s*class)?)\s*[:=]?\s*([\d,]+)/i);
+        if (curE == null && yLab) curE = parseInt(String(yLab[1]).replace(/,/g, ''), 10);
+        if (curB == null && jLab) curB = parseInt(String(jLab[1]).replace(/,/g, ''), 10);
+        if (curF == null && fLab) curF = parseInt(String(fLab[1]).replace(/,/g, ''), 10);
+    }
     var cap = jsNum(['maxSeats','totalSeats','capacity','acCapacity','cargoCap' ]) || 0;
     if (!(cap > 0)) {
         var capM = text.match(/capacity[^0-9]{0,24}([\d,]+)/i) || html.match(/maxSeats\s*=\s*(\d+)/i);
@@ -13680,8 +16195,9 @@ function am4FleetParseModifyInfo(html) {
         if (!isFinite(sliderPct)) sliderPct = null;
     }
     if (sliderPct == null) {
-        var slidM = html.match(/cargoSlider[^%]{0,80}?value\s*[:=]\s*['"]?(\d{1,3})/i) ||
-            html.match(/#cargoSlider[\s\S]{0,120}?value=["'](\d{1,3})/i);
+        var slidM = html.match(/cargoSlider[^%]{0,120}?value\s*[:=]\s*['"]?(\d{1,3})/i) ||
+            html.match(/#cargoSlider[\s\S]{0,160}?value=["'](\d{1,3})/i) ||
+            html.match(/id=["']cargoSlider["'][^>]*value=["'](\d{1,3})/i);
         if (slidM) sliderPct = parseInt(slidM[1], 10);
     }
     var pctLarge = text.match(/Large(?:\s+load)?[^%]{0,48}?(\d{1,3})\s*%/i);
@@ -13700,25 +16216,8 @@ function am4FleetParseModifyInfo(html) {
         curPctH = 100 - curPctL;
         cargoSrc = 'slider';
     }
-    if (sumL != null && sumH != null && (sumL + sumH) > 1000) {
-        // sumLargeLoad/sumHeavyLoad are capacity units (large+heavy ≈ maxSeats).
-        var unitTot = sumL + sumH;
-        curPctL = Math.round((sumL / unitTot) * 100);
-        if (curPctL < 0) curPctL = 0;
-        if (curPctL > 100) curPctL = 100;
-        curPctH = 100 - curPctL;
-        curL = Math.round(sumL * AM4_CARGO_W_L); // display lbs for UI
-        curH = Math.round(sumH);
-        cap = Math.round(unitTot);
-        cargoSrc = 'sumLoads';
-    }
-    if (curPctL != null && (curL == null || curH == null) && cap > 0) {
-        var disp = am4CargoPctToDisplayLbs(curPctL, curPctH, cap);
-        if (curL == null) curL = disp.l;
-        if (curH == null) curH = disp.h;
-    }
-    // Large/Heavy Lbs labels → % via (L/0.7)+H = capacity (not L+H).
-    if (curL == null || curH == null || cargoSrc === '') {
+    // Lbs labels → % via (L/0.7)+H = capacity. Prefer before stale sumLoads defaults.
+    if (curPctL == null) {
         var lm = text.match(/Large(?:\s+load)?[^0-9%]{0,40}([\d,]+)\s*Lbs/i);
         var hm = text.match(/Heavy(?:\s+load)?[^0-9%]{0,40}([\d,]+)\s*Lbs/i);
         if (lm && hm) {
@@ -13735,8 +16234,35 @@ function am4FleetParseModifyInfo(html) {
             }
         }
     }
+    // sumLargeLoad/sumHeavyLoad — only if we still have no % and the pair looks live (not 100%L/0%H stub).
+    if (curPctL == null && sumL != null && sumH != null && (sumL + sumH) > 1000) {
+        var unitTot = sumL + sumH;
+        var looksStub = sumH <= 0 && sumL >= unitTot * 0.95;
+        if (!looksStub) {
+            curPctL = Math.round((sumL / unitTot) * 100);
+            if (curPctL < 0) curPctL = 0;
+            if (curPctL > 100) curPctL = 100;
+            curPctH = 100 - curPctL;
+            curL = Math.round(sumL * AM4_CARGO_W_L);
+            curH = Math.round(sumH);
+            cap = Math.round(unitTot);
+            cargoSrc = 'sumLoads';
+        }
+    } else if (curPctL != null && sumL != null && sumH != null && (sumL + sumH) > 1000) {
+        // Keep slider/label %; still adopt capacity from sumLoads when plausible.
+        var unitTot2 = sumL + sumH;
+        var looksStub2 = sumH <= 0 && sumL >= unitTot2 * 0.95;
+        if (!looksStub2 && Math.abs(unitTot2 - (cap || unitTot2)) <= Math.max(8000, unitTot2 * 0.12)) {
+            cap = Math.round(unitTot2);
+        }
+    }
+    if (curPctL != null && (curL == null || curH == null) && cap > 0) {
+        var disp = am4CargoPctToDisplayLbs(curPctL, curPctH, cap);
+        if (curL == null) curL = disp.l;
+        if (curH == null) curH = disp.h;
+    }
     // Fallback JS field names (rare) — still require capacity-plausible lbs, not Explorer kg.
-    if (curL == null) {
+    if (curPctL == null) {
         var rawL = jsNum(['lSeat','lCargo','largeLoad','largeCargo','cargoL' ]);
         if (rawL == null) rawL = inpNum('#lSeat, input[name="lSeat"], #largeLoad, #lCargo, input[name="largeLoad"]');
         if (rawL == null) rawL = attrNum('lSeat') || attrNum('largeLoad') || attrNum('lCargo');
@@ -13745,7 +16271,7 @@ function am4FleetParseModifyInfo(html) {
         if (rawH == null) rawH = attrNum('hSeat') || attrNum('heavyLoad') || attrNum('hCargo');
         if (rawL != null && rawH != null && (rawL + rawH) > 100) {
             var fromRawMaint = am4CargoMaintLbsToPct(rawL, rawH);
-            var fillUnits = rawL + rawH; // capacity-unit fields
+            var fillUnits = rawL + rawH;
             var okDisp = fromRawMaint && fromRawMaint.cap >= 10000;
             var okUnits = cap > 0 && Math.abs(fillUnits - cap) <= Math.max(8000, cap * 0.12);
             if (okUnits) {
@@ -13764,33 +16290,76 @@ function am4FleetParseModifyInfo(html) {
             }
         }
     }
-    var cargo = /modType\s*=\s*['"]cargo['"]/i.test(html) ||
-        /Large load|Heavy load|cargoSlider|#lSeat|#hSeat/i.test(html) ||
-        !!box.querySelector('#lSeat, #hSeat, #largeLoad, #heavyLoad, #cargoSlider, input[type="range"]') ||
-        ((curL != null || curH != null || curPctL != null) && curE == null && curB == null && curF == null);
+    var hasEEl = !!box.querySelector('#eSeat, input[name="eSeat"], #ecoSeat');
+    var hasBEl = !!box.querySelector('#bSeat, input[name="bSeat"], #busSeat');
+    var hasFEl = !!box.querySelector('#fSeat, input[name="fSeat"], #firstSeat');
+    var modTypeCargo = /modType\s*=\s*['"]?cargo['"]?/i.test(html);
+    var modTypePax = /modType\s*=\s*['"]?pax['"]?/i.test(html);
+    var hasCargoSlider = !!box.querySelector('#cargoSlider');
+    var hasCargoFields = !!box.querySelector('#largeLoad, #heavyLoad, #lSeat, input[name="lSeat"], input[name="largeLoad"]');
+    var largeHeavyLabels = /Large\s*load/i.test(text) && /Heavy\s*load/i.test(text);
+    // Shell pages often mention sumLargeLoad even for pax — do NOT treat that alone as cargo.
+    // Freighters: modType=cargo and/or #cargoSlider (eSeat/bSeat may be reused for L%/H%).
+    // Pax / charter: eSeat+bSeat (+ optional fSeat), no cargo slider.
+    var cargo = false;
+    if (modTypeCargo || hasCargoSlider || hasCargoFields) {
+        cargo = true;
+    } else if (largeHeavyLabels && !hasEEl && !hasBEl && !hasFEl) {
+        cargo = true;
+    } else if ((curL != null || curH != null || curPctL != null) &&
+        curE == null && curB == null && !hasEEl && !hasBEl) {
+        cargo = true;
+    }
+    if (modTypePax || ((hasEEl || hasBEl || hasFEl) && !modTypeCargo && !hasCargoSlider && !hasCargoFields)) {
+        cargo = false;
+    }
     // Seat numbers or a real modify checkbox — not a bare"eSeat" string from the
     // game shell / route panel, which used to mark unread pages as valid.
-    var looksValid = curE != null || curL != null || curH != null || curPctL != null || jsNum(['mod1cost']) != null ||
+    var looksValid = curE != null || curB != null || curL != null || curH != null || curPctL != null || jsNum(['mod1cost']) != null ||
         !!box.querySelector('#mod1, #eSeat, #lSeat, #cargoSlider, input[name="eSeat"], input[name="lSeat"], input[type="range"]');
     var reason = 'ok';
-    if (!looksValid) {
+    // Pending must win even when the shell still looks like a form (re-submit resets the 12h timer).
+    if (/pending maintenance|under maintenance|modification in progress|currently being modified/i.test(html) ||
+        /pending maintenance|under maintenance/i.test(text)) {
+        reason = 'pending';
+        looksValid = false;
+    } else if (!looksValid) {
         if (/not at a base|inbound to a base/i.test(html)) reason = 'away';
         else if (/pending maintenance/i.test(html)) reason = 'pending';
         else if ((html || '').length > 2000) reason = 'busy';
         else reason = 'unreadable';
     }
+    // Charter: suite Charter, no usable First control, or Eco+Biz with F held at 0.
+    var fUsable = typeof am4FleetFirstSeatUsable === 'function' && am4FleetFirstSeatUsable(box, html);
+    var charter = !cargo && (
+        (typeof am4IsCharter === 'function' && am4IsCharter()) ||
+        (hasEEl && hasBEl && !fUsable) ||
+        (curE != null && curB != null && (curF == null || Number(curF) === 0) &&
+            Number(curE) > 0 && Number(curB) > 0)
+    );
+    if (charter) curF = 0;
+    // Drop cargo-only fields when this is clearly a pax/charter panel.
+    if (!cargo) {
+        curL = null; curH = null; curPctL = null; curPctH = null; cargoSrc = '';
+    }
+    var m1c = modCost(1, 'CO2|CO₂|Reduced\\s*CO');
+    var m2c = modCost(2, 'Speed\\s*Increase|Speed');
+    var m3c = modCost(3, 'Fuel\\s*Consum|Reduced\\s*Fuel|Fuel');
     return {
         looksValid: !!looksValid,
         scanned: true,
         reason: reason,
         cargo: !!cargo,
+        charter: !!charter,
+        rawHtml: html,
+        _modBox: null,
         curE: curE, curB: curB, curF: curF, curL: curL, curH: curH,
         curPctL: curPctL, curPctH: curPctH,
         cargoCap: cap || 0,
         cargoSrc: cargoSrc || '',
-        mod1cost: jsNum(['mod1cost']) || 0,
-        mod2cost: jsNum(['mod2cost']) || 0,
-        mod3cost: jsNum(['mod3cost']) || 0,
+        mod1cost: m1c,
+        mod2cost: m2c,
+        mod3cost: m3c,
         mod1on: modOn(1),
         mod2on: modOn(2),
         mod3on: modOn(3),
@@ -13819,18 +16388,128 @@ function am4FleetCargoCurrentPct(info) {
     return am4FleetCargoWantToPct(info.curL, info.curH);
 }
 
+function am4FleetRowLooksCargo(p) {
+    if (!p) return false;
+    var model = p.model || p.name || '';
+    if (typeof am4AircraftLooksFreighter === 'function' && am4AircraftLooksFreighter(model)) return true;
+    var y = Number(p.y) || 0, j = Number(p.j) || 0, f = Number(p.f) || 0;
+    var l = Number(p.l) || 0, h = Number(p.h) || 0;
+    var paxSeats = y + j + f;
+    var lh = l + h;
+    // Charter/scheduled pax with Y+J (F may be 0) must never be forced into L/H UI.
+    if (paxSeats > 0 && lh <= 100 && !am4AircraftLooksFreighter(model)) return false;
+    if (p.cargo && paxSeats === 0) return true;
+    if (lh > 100 && paxSeats === 0) return true;
+    try {
+        var snap = typeof am4FleetStatusSnap === 'function' ? am4FleetStatusSnap(p.planeId) : null;
+        if (snap && snap.cargo && paxSeats === 0) return true;
+    } catch (eSd) { /* ignore */ }
+    if (typeof am4AircraftIsCargo === 'function' && am4AircraftIsCargo() &&
+        p.typeId && Number(p.typeId) === Number(am4AircraftTypeId()) && paxSeats === 0) return true;
+    return false;
+}
+
+function am4FleetModPlaneHint(planeId) {
+    var id = String(planeId || '');
+    var pools = [am4FleetModListCache, am4FleetParkedCache];
+    try {
+        if (am4FleetRouteCandidateCache && am4FleetRouteCandidateCache.rows) {
+            pools.push(am4FleetRouteCandidateCache.rows);
+        }
+    } catch (eR) { /* ignore */ }
+    var i, j, p;
+    for (i = 0; i < pools.length; i++) {
+        for (j = 0; j < (pools[i] || []).length; j++) {
+            p = pools[i][j];
+            if (p && String(p.planeId) === id) return p;
+        }
+    }
+    return null;
+}
+
+// Freighter modify forms often reuse #eSeat/#bSeat for Large%/Heavy% — remap to cargo.
+function am4FleetNormalizeModifyInfo(info, plane) {
+    if (!info) info = { looksValid: false, cargo: false, reason: 'unreadable' };
+    var forceCargo = am4FleetRowLooksCargo(plane);
+    var paxSeats = plane ? ((Number(plane.y) || 0) + (Number(plane.j) || 0) + (Number(plane.f) || 0)) : 0;
+    var paxModel = plane && !(typeof am4AircraftLooksFreighter === 'function' &&
+        am4AircraftLooksFreighter(plane.model || plane.name));
+    if (forceCargo) info.cargo = true;
+    else if (paxSeats > 0 && paxModel) info.cargo = false;
+    if (info.cargo) {
+        if ((info.curPctL == null || info.curPctH == null) &&
+            info.curE != null && info.curB != null) {
+            var e = Number(info.curE) || 0;
+            var b = Number(info.curB) || 0;
+            var sum = e + b;
+            if (sum > 0 && sum <= 100) {
+                info.curPctL = Math.round((e / sum) * 100);
+                if (info.curPctL < 0) info.curPctL = 0;
+                if (info.curPctL > 100) info.curPctL = 100;
+                info.curPctH = 100 - info.curPctL;
+                info.cargoSrc = info.cargoSrc || 'eSeat-pct';
+            } else if (sum > 100) {
+                var fromU = am4FleetCargoWantToPct(e, b);
+                if (fromU) {
+                    info.curPctL = fromU.l;
+                    info.curPctH = fromU.h;
+                    info.cargoSrc = info.cargoSrc || 'eSeat-units';
+                }
+            }
+        }
+        if ((info.curPctL == null || info.curPctH == null) && plane &&
+            ((plane.l || 0) + (plane.h || 0) > 100)) {
+            var fromFleet = (typeof am4CargoMaintLbsToPct === 'function'
+                ? am4CargoMaintLbsToPct(plane.l, plane.h) : null) || am4FleetCargoWantToPct(plane.l, plane.h);
+            if (fromFleet) {
+                info.curPctL = fromFleet.l;
+                info.curPctH = fromFleet.h;
+                if (fromFleet.cap) info.cargoCap = info.cargoCap || fromFleet.cap;
+                info.cargoSrc = info.cargoSrc || 'fleet-row';
+            }
+        }
+        info.curE = null;
+        info.curB = null;
+        info.curF = null;
+        info.charter = false;
+        if (info.curPctL != null) info.looksValid = true;
+    } else if (typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(info, plane)) {
+        info.charter = true;
+        info.curF = 0;
+    }
+    return info;
+}
+
 function am4FleetModOptionText(p, info) {
     var seats;
-    if ((info && info.cargo) || p.cargo) {
+    var isCargo = am4FleetRowLooksCargo(p) || !!(info && info.cargo);
+    var charterSeats = !isCargo && (typeof am4FleetPaxIsCharterLayout === 'function'
+        ? am4FleetPaxIsCharterLayout(info, p) : (typeof am4IsCharter === 'function' && am4IsCharter()));
+    if (isCargo) {
         var pct = am4FleetCargoCurrentPct(info);
-        seats = pct ? (pct.l + '%L/' + pct.h + '%H') : 'L?/H? (Maintenance)';
+        if (!pct && p && ((p.l || 0) + (p.h || 0) > 0)) {
+            pct = (typeof am4CargoMaintLbsToPct === 'function' ? am4CargoMaintLbsToPct(p.l, p.h) : null) ||
+                am4FleetCargoWantToPct(p.l, p.h);
+        }
+        seats = pct ? (pct.l + '%L/' + pct.h + '%H') :
+            (((p.l || 0) + (p.h || 0) > 0) ? ('L' + (p.l || 0) + '/H' + (p.h || 0)) : 'L?/H?');
+    } else if (charterSeats) {
+        seats = (p.y || 0) + '/' + (p.j || 0);
     } else {
         seats = (p.y || 0) + '/' + (p.j || 0) + '/' + (p.f || 0);
     }
     var st = p.status ? (' [' + p.status + ']') : '';
     var mdl = p.model ? (' · ' + p.model) : '';
-    var zero = (!info || !info.cargo) && !p.cargo && (p.y === 0 || p.j === 0 || p.f === 0) ?' ⚠no J/F' : '';
-    var cargoEmpty = ((info && info.cargo) || p.cargo) && !am4FleetCargoCurrentPct(info) ?' ⚠no L/H' : '';
+    var zero = '';
+    if (!isCargo) {
+        var needWarn = charterSeats
+            ? ((Number(p.y) || 0) === 0 || (Number(p.j) || 0) === 0)
+            : (typeof am4PaxIsRoutable === 'function'
+                ? !am4PaxIsRoutable(p.y, p.j, p.f)
+                : (p.y === 0 || p.j === 0 || p.f === 0));
+        if (needWarn) zero = charterSeats ? ' ⚠need Y+J' : ' ⚠no J/F';
+    }
+    var cargoEmpty = isCargo && !am4FleetCargoCurrentPct(info) && !((p.l || 0) + (p.h || 0)) ? ' ⚠no L/H' : '';
     return (p.reg || p.planeId) + ' (' + seats + ') · ' + am4FleetModBadge(info) + mdl + st + zero + cargoEmpty;
 }
 
@@ -13854,7 +16533,11 @@ function am4FleetModScanStatus(msg) {
 
 function am4FleetModScanStop() {
     if (am4FleetModScanTimer) { clearTimeout(am4FleetModScanTimer); am4FleetModScanTimer = null; }
+    am4FleetModScanAbort = true;
 }
+
+var am4FleetModScanAbort = false;
+var AM4_FLEET_MOD_SCAN_PARALLEL = 8;
 
 // Skip only planes we actually read (or that the game refused). Unreadable / busy
 // stay in the queue so they are retried instead of freezing as"mods? " .
@@ -13864,58 +16547,85 @@ function am4FleetModScanSettled(info) {
     return info.reason === 'away' || info.reason === 'pending';
 }
 
+// Fast parallel upgrade scan for EVERY listed aircraft (at-base + routed).
+// Same concurrency pattern as Rebuild landed verify / Explorer country batches.
 function am4FleetModScanStart(ids) {
     am4FleetModScanStop();
+    am4FleetModScanAbort = false;
     ids = (ids || []).slice();
-    var i = 0;
-    var pass = 0;
-    var tick = function () {
-        am4FleetModScanTimer = null;
-        if (!document.getElementById('am4ModifyPanel')) return;
-        if (am4SuiteResearchBusy()) {
-            am4FleetModScanStatus('Upgrade scan paused — Research is using this aircraft.');
-            am4FleetModScanTimer = setTimeout(tick, 1200);
+    if (!ids.length) {
+        am4FleetModScanStatus('No aircraft to scan.');
+        return;
+    }
+    var next = 0;
+    var active = 0;
+    var finished = 0;
+    var total = ids.length;
+    function statusLine() {
+        am4FleetModScanStatus('Reading upgrades ' + Math.min(finished, total) + '/' + total +
+            ' (×' + AM4_FLEET_MOD_SCAN_PARALLEL + ' parallel)…');
+    }
+    function complete() {
+        am4FleetModScanStatus('Upgrade scan complete — ' + total +
+            ' aircraft · ✓ means that modification is already on the plane.');
+    }
+    function pump() {
+        if (am4FleetModScanAbort) return;
+        if (!document.getElementById('am4ModifyPanel')) {
+            am4FleetModScanAbort = true;
             return;
         }
-        while (i < ids.length && am4FleetModScanSettled(am4FleetModInfoCache[ids[i]])) i++;
-        if (i >= ids.length) {
-            if (pass === 0) {
-                var retry = ids.filter(function (id) { return !am4FleetModScanSettled(am4FleetModInfoCache[id]); });
-                if (retry.length) {
-                    pass = 1;
-                    ids = retry;
-                    i = 0;
-                    am4FleetModScanStatus('Retrying ' + retry.length + ' unread upgrade panels…');
-                    am4FleetModScanTimer = setTimeout(tick, 800);
+        if (am4SuiteResearchBusy()) {
+            am4FleetModScanStatus('Upgrade scan paused — Research is using an aircraft.');
+            am4FleetModScanTimer = setTimeout(function () {
+                am4FleetModScanTimer = null;
+                pump();
+            }, 1200);
+            return;
+        }
+        while (active < AM4_FLEET_MOD_SCAN_PARALLEL && next < ids.length) {
+            (function (id) {
+                if (am4FleetModScanSettled(am4FleetModInfoCache[id])) {
+                    finished++;
+                    statusLine();
+                    if (next >= ids.length && active === 0) complete();
                     return;
                 }
-            }
-            am4FleetModScanStatus('Upgrade scan complete — ✓ means that modification is already on the plane.');
-            return;
+                active++;
+                am4FleetFetchModifyInfo(id, true).then(function (info) {
+                    if (am4FleetModScanAbort) return;
+                    if (info && info.paused) {
+                        ids.push(id);
+                        total = ids.length;
+                    } else {
+                        am4FleetModUpdateOption(id, info);
+                    }
+                }).catch(function () { /* leave unsettled for a later refresh */ }).then(function () {
+                    active--;
+                    finished++;
+                    statusLine();
+                    if (am4FleetModScanAbort) return;
+                    if (next >= ids.length && active === 0) complete();
+                    else pump();
+                });
+            })(ids[next++]);
         }
-        var id = ids[i++];
-        am4FleetModScanStatus('Reading upgrades ' + i + '/' + ids.length + '…');
-        am4FleetFetchModifyInfo(id, true).then(function (info) {
-            if (info && info.paused) {
-                i--;
-                am4FleetModScanTimer = setTimeout(tick, 1200);
-                return;
-            }
-            am4FleetModUpdateOption(id, info);
-            am4FleetModScanTimer = setTimeout(tick, 380);
-        }).catch(function () {
-            am4FleetModScanTimer = setTimeout(tick, 600);
-        });
-    };
-    tick();
+        if (next >= ids.length && active === 0) complete();
+    }
+    statusLine();
+    pump();
 }
 
 // Read-only: load the game's own per-plane modify panel (no mode=do).
 // Never uses Ajax() into a game container, so Research's popup is left alone.
 function am4FleetFetchModifyInfo(planeId, fromScan) {
+    var planeHint = am4FleetModPlaneHint(planeId);
     var cached = am4FleetModInfoCache[planeId];
     if (cached && cached.looksValid && (Date.now() - (cached.at || 0)) < 120000) {
-        return Promise.resolve(cached);
+        // Stale pax parse of a freighter — force re-read.
+        if (!(planeHint && am4FleetRowLooksCargo(planeHint) && !cached.cargo)) {
+            return Promise.resolve(am4FleetNormalizeModifyInfo(cached, planeHint));
+        }
     }
     if (am4SuiteResearchBusy()) {
         return Promise.resolve(cached || { looksValid: false, paused: true });
@@ -13923,12 +16633,30 @@ function am4FleetFetchModifyInfo(planeId, fromScan) {
     return am4RteGameGet('maint_plan_do.php?type=modify&id=' + encodeURIComponent(planeId))
         .then(function (res) {
             var html = (res && res.body) || '';
-            var info = am4FleetParseModifyInfo(html);
+            var plane = am4FleetModPlaneHint(planeId);
+            var info = am4FleetNormalizeModifyInfo(am4FleetParseModifyInfo(html), plane);
+            if (plane && am4FleetRowLooksCargo(plane)) {
+                plane.cargo = true;
+                info.cargo = true;
+            }
             info.scanned = am4FleetModScanSettled(info);
             if (info.looksValid || info.reason === 'away' || info.reason === 'pending') {
                 am4FleetModInfoCache[planeId] = info;
             }
-            if (!info.looksValid && am4FleetModParseMissLogged < 4) {
+            try {
+                // Bulk upgrade scans stay silent — status line covers progress.
+                if (!fromScan) {
+                    console.log('[AM4 Bot Log] modify read id=' + planeId +
+                        ' valid=' + !!info.looksValid + ' cargo=' + !!info.cargo +
+                        ' src=' + (info.cargoSrc || '-') +
+                        ' seats=' + info.curE + '/' + info.curB + '/' + info.curF +
+                        ' pct=' + info.curPctL + '/' + info.curPctH +
+                        ' mods=' + (info.mod1on ? 1 : 0) + (info.mod2on ? 1 : 0) + (info.mod3on ? 1 : 0) +
+                        ' costs=' + info.mod1cost + '/' + info.mod2cost + '/' + info.mod3cost +
+                        ' reason=' + (info.reason || 'ok') + ' ' + (html || '').length + 'b');
+                }
+            } catch (eLogR) { /* ignore */ }
+            if (!fromScan && !info.looksValid && am4FleetModParseMissLogged < 4) {
                 am4FleetModParseMissLogged++;
                 try {
                     am4LogAction('mod','🔎 modify unread id ' + planeId + ' ' + (html || '').length +
@@ -13990,25 +16718,26 @@ function am4FleetClearCargoModHost() {
     if (el) el.innerHTML = '';
 }
 
-// Game modify panel defines modifyAction()/setModifyTime() in <script> tags.
+// Strip <script> from modify HTML before DOM insert. Never eval these into window —
+// injected blocks close over id=undefined and poison the game's real modifyAction().
+function am4FleetStripModifyScripts(html) {
+    return String(html || '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+}
+
+function am4FleetCapFromModifyHtml(html) {
+    var raw = String(html || '');
+    var m = raw.match(/maxSeats\s*=\s*(\d+)/i) || raw.match(/cargoCap\s*=\s*(\d+)/i) ||
+        raw.match(/acCapacity\s*=\s*(\d+)/i) || raw.match(/totalSeats\s*=\s*(\d+)/i);
+    if (!m) return 0;
+    var n = parseInt(m[1], 10);
+    return n >= 10000 ? n : 0;
+}
+
+// Log-only: parse modifyAction/setModifyTime bodies. Do NOT install them on window.
 function am4FleetEvalModifyScripts(html) {
     var raw = String(html || '');
-    var re = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
-    var m, n = 0;
-    while ((m = re.exec(raw)) !== null) {
-        var src = String(m[1] || '');
-        if (!/modifyAction|setModifyTime|cargoSlider/i.test(src)) continue;
-        try {
-            // eslint-disable-next-line no-new-func
-            (new Function(src))();
-            n++;
-        } catch (eEval) {
-            console.log('[AM4 Bot Log] modify script eval failed: ' + eEval);
-        }
-    }
-    if (n) console.log('[AM4 Bot Log] installed ' + n + ' modify script block(s)');
     var body = am4FleetExtractModifyActionBody(raw);
-    if (body) console.log('[AM4 Bot Log] modifyAction body: ' + body.replace(/\s+/g, ' ').slice(0, 420));
+    if (body) console.log('[AM4 Bot Log] modifyAction body (not installed): ' + body.replace(/\s+/g, ' ').slice(0, 420));
     var setBody = am4FleetExtractSetModifyTimeBody(raw);
     if (setBody) {
         var clip = setBody.replace(/\s+/g, ' ');
@@ -14166,11 +16895,12 @@ function am4FleetInjectCargoModify(planeId) {
             cache: false,
             dataType: 'html',
             success: function (html) {
-                try { jq(host).html(html); } catch (eHtml) { host.innerHTML = html || ''; }
-                am4FleetEvalModifyScripts(html);
-                try { window.id = String(planeId); } catch (eId) { /* ignore */ }
-                console.log('[AM4 Bot Log] cargo modify form injected (' + String(html || '').length + ' chars)');
-                resolve(html == null ?'' : String(html));
+                var raw = html == null ? '' : String(html);
+                // Never .html() raw scripts — jQuery/exec would poison window.modifyAction.
+                try { host.innerHTML = am4FleetStripModifyScripts(raw); } catch (eHtml) { host.innerHTML = ''; }
+                am4FleetEvalModifyScripts(raw);
+                console.log('[AM4 Bot Log] cargo modify form injected (' + raw.length + ' chars, scripts stripped)');
+                resolve(raw);
             },
             error: function (xhr) {
                 reject(new Error('modify detail HTTP ' + ((xhr && xhr.status) || 0)));
@@ -14385,7 +17115,8 @@ function am4FleetInvokeModifyAction() {
     });
 }
 
-// Cargo modify: slider is 0–100% Large; submit uses large=/heavy= lbs + id (not lSeat/hSeat).
+// Cargo modify: Large%/Heavy% → capacity-share large=/heavy= (not lSeat/hSeat, not display lbs).
+// Never open #maintPlanAction or eval modifyAction — that poisons the in-game Modify button.
 function am4FleetApplyCargoModifyViaGame(planeId, l, h, m1, m2, m3) {
     planeId = String(planeId || '').replace(/\D/g, '');
     if (!planeId) {
@@ -14395,91 +17126,72 @@ function am4FleetApplyCargoModifyViaGame(planeId, l, h, m1, m2, m3) {
     if (!units) {
         return Promise.resolve({ ok: false, refused: true, hint: 'cargo L/H empty' });
     }
-    return am4FleetOpenLiveModifyPanel(planeId).then(function (liveRoot) {
-        if (liveRoot) {
-            return { html: liveRoot.innerHTML || '', host: liveRoot, live: true };
-        }
-        var existing = am4FleetCargoLiveModRoot();
-        if (existing) {
-            return { html: existing.innerHTML || '', host: existing, live: true };
-        }
-        return am4FleetInjectCargoModify(planeId).then(function (html) {
-            return { html: html, host: am4FleetCargoModHost(), live: false };
-        });
-    }).then(function (ctx) {
-        var host = ctx.host;
-        am4FleetCargoProbeModifyForm(host, ctx.html);
-        var sel = host.querySelector('#acMaintSelector, select[name="acMaintSelector"]');
-        if (sel) {
-            sel.value = String(planeId);
-            if (window.jQuery) {
-                try { window.jQuery(sel).val(String(planeId)).trigger('change'); } catch (eSel) { /* ignore */ }
-            }
-        }
-        am4FleetApplyCargoSlider(host, units.l, units.h);
-        am4FleetSetModCheckbox(host, 1, m1);
-        am4FleetSetModCheckbox(host, 2, m2);
-        am4FleetSetModCheckbox(host, 3, m3);
-        try { if (typeof window.setModifyTime === 'function') window.setModifyTime(); } catch (eT) { /* ignore */ }
-
-        var loads = am4FleetResolveCargoSumLoads(host, units.l, units.h);
-        am4FleetBindCargoModifyGlobals(planeId, loads.large, loads.heavy, m1, m2, m3);
-        var fallbackUrl = am4FleetBuildCargoModifyDoUrl(planeId, loads.large, loads.heavy, m1, m2, m3);
-        console.log('[AM4 Bot Log] Fleet cargo modify id=' + planeId +
-            (ctx.live ? ' (live panel)' : ' (injected)') +
-            ' slider L=' + units.l + '% H=' + units.h + '% → large=' + loads.large +
-            ' heavy=' + loads.heavy + ' (' + loads.source + ' cap=' + (loads.cap || '?') +
-            ' display≈L' + Math.round(loads.large * AM4_CARGO_W_L) + '/H' + loads.heavy + ') mods=' +
-            (m1 ? 1 : 0) + (m2 ? 1 : 0) + (m3 ? 1 : 0));
-
-        // modifyAction from injected scripts closes over id=undefined — it always fires a bad
-        // native request. Submit only our corrected Ajax URL (large/heavy from capacity×%).
-        console.log('[AM4 Bot Log] cargo modify submit (skip native modifyAction): ' + fallbackUrl);
-        return am4FleetCargoModifyDo(fallbackUrl).then(function (res) {
-            return {
-                clicked: false,
-                usedFallback: true,
-                nativeUrl: fallbackUrl,
-                wantPct: units,
-                response: res && res.body,
-                live: ctx.live
-            };
-        });
-    }).then(function (mid) {
-        if (!mid || mid.ok === false) return mid;
-        var wantPct = mid.wantPct || units;
-        var refusedBody = /error\s*occur|too low|not enough|insufficient|denied|invalid|failed|cannot|can't/i.test(String(mid.response || ''));
-        return new Promise(function (resolve) {
-            setTimeout(function () {
-                delete am4FleetModInfoCache[planeId];
-                am4FleetFetchModifyInfo(planeId).then(function (after) {
-                    if (!mid.live) am4FleetClearCargoModHost();
-                    var afterPct = after ? am4FleetCargoWantToPct(after.curL, after.curH) : null;
-                    var loadOk = after && after.looksValid && am4FleetCargoPctClose(afterPct, wantPct);
-                    var pending = after && after.reason === 'pending';
-                    resolve({
-                        ok: !!(loadOk || pending) && !refusedBody,
-                        loadOk: !!loadOk,
-                        refused: !!refusedBody,
-                        after: after,
-                        nativeUrl: mid.nativeUrl,
-                        usedFallback: !!mid.usedFallback,
-                        hint: refusedBody
-                            ? ('game refused: ' + String(mid.response || '').slice(0, 160))
-                            : (mid.nativeUrl
-                                ? ('sent ' + mid.nativeUrl + (loadOk || pending ? '' : ' · holds not confirmed yet'))
-                                : '')
+    var capHint = am4CargoEffectiveCap(
+        (am4FleetModCache && am4FleetModCache.cargoCap) || am4AircraftCargoKg() || 330000
+    );
+    return am4RteGameGet('maint_plan_do.php?type=modify&id=' + encodeURIComponent(planeId))
+        .then(function (res) {
+            var html = (res && res.body) || '';
+            am4FleetEvalModifyScripts(html);
+            var fromHtml = am4FleetCapFromModifyHtml(html);
+            var cap = fromHtml > 0 ? fromHtml : capHint;
+            var loads = am4CargoPctToSubmitLoads(units.l, units.h, cap);
+            var fallbackUrl = am4FleetBuildCargoModifyDoUrl(planeId, loads.l, loads.h, m1, m2, m3);
+            console.log('[AM4 Bot Log] Fleet cargo modify id=' + planeId +
+                ' (direct) slider L=' + units.l + '% H=' + units.h + '% → large=' + loads.l +
+                ' heavy=' + loads.h + ' (cap=' + loads.cap +
+                ' display≈L' + loads.displayL + '/H' + loads.displayH + ') mods=' +
+                (m1 ? 1 : 0) + (m2 ? 1 : 0) + (m3 ? 1 : 0));
+            console.log('[AM4 Bot Log] cargo modify submit: ' + fallbackUrl);
+            return am4FleetCargoModifyDo(fallbackUrl).then(function (doRes) {
+                return {
+                    usedFallback: true,
+                    nativeUrl: fallbackUrl,
+                    wantPct: units,
+                    response: doRes && doRes.body,
+                    live: false
+                };
+            });
+        }).then(function (mid) {
+            if (!mid || mid.ok === false) return mid;
+            var wantPct = mid.wantPct || units;
+            var refusedBody = /error\s*occur|too low|not enough|insufficient|denied|invalid|failed|cannot|can't/i.test(String(mid.response || ''));
+            var successToast = /Modification planned|toast\(['\"]Success/i.test(String(mid.response || ''));
+            return new Promise(function (resolve) {
+                setTimeout(function () {
+                    delete am4FleetModInfoCache[planeId];
+                    am4FleetFetchModifyInfo(planeId).then(function (after) {
+                        am4FleetClearCargoModHost();
+                        var afterPct = after ? am4FleetCargoCurrentPct(after) : null;
+                        var loadOk = after && after.looksValid && am4FleetCargoPctClose(afterPct, wantPct);
+                        var pending = after && after.reason === 'pending';
+                        resolve({
+                            ok: !!(loadOk || pending || successToast) && !refusedBody,
+                            loadOk: !!loadOk,
+                            refused: !!refusedBody,
+                            after: after,
+                            nativeUrl: mid.nativeUrl,
+                            usedFallback: !!mid.usedFallback,
+                            hint: refusedBody
+                                ? ('game refused: ' + String(mid.response || '').slice(0, 160))
+                                : (mid.nativeUrl
+                                    ? ('sent ' + mid.nativeUrl + (loadOk || pending || successToast ? '' : ' · holds not confirmed yet'))
+                                    : '')
+                        });
+                    }).catch(function () {
+                        am4FleetClearCargoModHost();
+                        resolve({
+                            ok: !!successToast && !refusedBody,
+                            refused: !!refusedBody,
+                            hint: successToast ? 'success toast; could not re-read' : 'could not re-read after cargo modify'
+                        });
                     });
-                }).catch(function () {
-                    if (!mid.live) am4FleetClearCargoModHost();
-                    resolve({ ok: false, refused: false, hint: 'could not re-read after cargo modify'});
-                });
-            }, 3000);
+                }, 2500);
+            });
+        }).catch(function (e) {
+            am4FleetClearCargoModHost();
+            throw e;
         });
-    }).catch(function (e) {
-        am4FleetClearCargoModHost();
-        throw e;
-    });
 }
 
 // Cargo config cost ≈ capacity × |ΔLarge%|/100 × ~$24.54 (100%→66% on 330k ≈ $2.75M).
@@ -14522,25 +17234,36 @@ function am4FleetSelectedModPlane() {
     return am4FleetModListCache.filter(function (p) { return p.planeId === sel.value; })[0] || null;
 }
 
-function am4FleetRenderModPicker() {
+function am4FleetRenderModPicker(opts) {
     var sel = document.getElementById('am4ModPlane');
     if (!sel) return;
+    opts = opts || {};
+    var prev = sel.value || '';
     sel.innerHTML ="<option value=''>reading aircraft…</option>" ;
-    am4FleetListModifyA380().then(function (list) {
+    am4FleetListModifyA380(true).then(function (list) {
         if (!list.length) {
             sel.innerHTML ="<option value=''>" + am4FleetEsc('no aircraft — ' + am4FleetModTally) +"</option>" ;
             return;
         }
         // At base first (the routing-prep case), then routed; then by reg for stable scanning.
         list.sort(function (a, b) {
-            var d = (AM4_FLEET_AT_BASE_RE.test(a.status) ? 0 : 1) - (AM4_FLEET_AT_BASE_RE.test(b.status) ? 0 : 1);
+            var rank = function (p) {
+                if (/Maintenance/i.test(p.status || '')) return 2;
+                if (AM4_FLEET_AT_BASE_RE.test(p.status)) return 0;
+                return 1;
+            };
+            var d = rank(a) - rank(b);
             return d || String(a.reg).localeCompare(String(b.reg));
         });
         sel.innerHTML = list.map(function (p) {
             return"<option value='" + am4FleetEsc(p.planeId) +"'>" +
                 am4FleetEsc(am4FleetModOptionText(p, am4FleetModInfoCache[p.planeId])) +"</option>" ;
         }).join('');
+        if (prev && list.some(function (p) { return String(p.planeId) === String(prev); })) {
+            sel.value = String(prev);
+        }
         am4FleetOnModPlaneSelect();
+        // Auto-load every listed aircraft's seats/cargo + mods (fast parallel, like Rebuild).
         am4FleetModScanStart(list.map(function (p) { return p.planeId; }));
     }).catch(function () { sel.innerHTML ="<option value=''>could not read fleet</option>" ; });
 }
@@ -14563,6 +17286,7 @@ function am4FleetOnModPlaneSelect() {
     }
     am4FleetSetModMsg('Reading this aircraft\'s current seats and upgrades…','#38bdf8');
     ['am4ModE','am4ModB','am4ModF' ].forEach(function (id) { var el = document.getElementById(id); if (el) el.value = ''; });
+    delete am4FleetModInfoCache[p.planeId];
     am4FleetFetchModifyInfo(p.planeId).then(function (info) {
         if (info && info.paused) {
             am4FleetSetModMsg('Research is running — upgrade read paused so the route stays on that aircraft.','#f59e0b');
@@ -14574,22 +17298,41 @@ function am4FleetOnModPlaneSelect() {
         }
         if (info && (info.reason === 'away' || info.reason === 'pending')) {
             am4FleetSetModMsg('This plane is not at base / has pending maintenance — the game will refuse a modify.','#ef4444');
+            // Keep Apply clickable so the user gets the same message on click (disabled buttons feel dead).
+            var applyAway = document.getElementById('am4ModApply');
+            if (applyAway) { applyAway.disabled = false; applyAway.style.opacity = '1'; }
+            am4FleetModCache = info;
             return;
         }
         if (!info) info = { looksValid: false, cargo: false, reason: 'unreadable'};
-        if (info.curE == null) info.curE = p.y;
-        if (info.curB == null) info.curB = p.j;
-        if (info.curF == null) info.curF = p.f;
-        if (info.cargo || p.cargo) {
+        info = am4FleetNormalizeModifyInfo(info, p);
+        // Pax/charter with Y+J must not fall into the freighter L/H UI (stale cargo flags).
+        if (!info.cargo && ((Number(p.y) || 0) + (Number(p.j) || 0) > 0) &&
+            !(typeof am4AircraftLooksFreighter === 'function' && am4AircraftLooksFreighter(p.model || p.name))) {
+            p.cargo = false;
+            info.cargo = false;
+        }
+        if (am4FleetRowLooksCargo(p) || info.cargo ||
+            (typeof am4AircraftLooksFreighter === 'function' && am4AircraftLooksFreighter(p.model || p.name))) {
             info.cargo = true;
-            // Do NOT use fleet/Explorer p.l/p.h — those are route demand kg, not Maintenance holds.
-            // Without a Maintenance slider read, assume factory-style 100% Large (matches ~$2.75M to 66/34).
+            p.cargo = true;
+            // Prefer Maintenance parse. Fleet Large/Heavy are display lbs (with commas fixed).
             if (info.curPctL == null || info.curPctH == null) {
                 var fromMaint = am4FleetCargoWantToPct(info.curL, info.curH);
-                if (fromMaint && (info.curL > 100 || info.curH > 100)) {
+                if (fromMaint && ((info.curL || 0) + (info.curH || 0) > 100)) {
                     info.curPctL = fromMaint.l;
                     info.curPctH = fromMaint.h;
-                } else {
+                    info.cargoSrc = info.cargoSrc || 'maint-lbs';
+                } else if ((p.l || 0) + (p.h || 0) > 100) {
+                    var fromFleet = am4CargoMaintLbsToPct(p.l, p.h) || am4FleetCargoWantToPct(p.l, p.h);
+                    if (fromFleet) {
+                        info.curPctL = fromFleet.l;
+                        info.curPctH = fromFleet.h;
+                        info.cargoCap = info.cargoCap || fromFleet.cap;
+                        info.cargoSrc = info.cargoSrc || 'fleet-lbs';
+                    }
+                }
+                if (info.curPctL == null || info.curPctH == null) {
                     info.curPctL = 100;
                     info.curPctH = 0;
                     info.cargoSrc = info.cargoSrc || 'assume-100L';
@@ -14601,8 +17344,15 @@ function am4FleetOnModPlaneSelect() {
             info.curH = dispNow.h;
             info.cargoCap = dispNow.cap || capNow;
         } else {
-            if (info.curL == null) info.curL = p.y;
-            if (info.curH == null) info.curH = p.j;
+            if (info.curE == null && p.y != null) info.curE = p.y;
+            if (info.curB == null && p.j != null) info.curB = p.j;
+            if (info.curF == null && p.f != null) info.curF = p.f;
+            if (typeof am4FleetPaxIsCharterLayout === 'function' && am4FleetPaxIsCharterLayout(info, p)) {
+                info.charter = true;
+                info.curF = 0;
+            } else if (typeof am4IsCharter === 'function' && am4IsCharter()) {
+                info.curF = 0;
+            }
         }
         info.mod1on = !!info.mod1on;
         info.mod2on = !!info.mod2on;
@@ -14612,10 +17362,18 @@ function am4FleetOnModPlaneSelect() {
         info.mod3cost = info.mod3cost || 0;
         am4FleetModCache = info;
         am4FleetModUpdateOption(p.planeId, info);
+        var charterUi = !info.cargo && (typeof am4FleetPaxIsCharterLayout === 'function'
+            ? am4FleetPaxIsCharterLayout(info, p) : (typeof am4IsCharter === 'function' && am4IsCharter()));
         var seatLabel = document.getElementById('am4ModSeatLabel');
-        if (seatLabel) seatLabel.innerText = info.cargo ? 'Large % / Heavy %' : 'Seats Y / J / F';
+        if (seatLabel) {
+            seatLabel.innerText = info.cargo ? 'Large % / Heavy %'
+                : (charterUi ? 'Seats Y / J' : 'Seats Y / J / F');
+        }
         var fInput = document.getElementById('am4ModF');
-        if (fInput) fInput.style.display = info.cargo ?'none' : '';
+        if (fInput) {
+            fInput.style.display = (info.cargo || charterUi) ? 'none' : '';
+            if (charterUi) fInput.value = '0';
+        }
         var setV = function (id, v) { var el = document.getElementById(id); if (el && v != null) el.value = v; };
         if (info.cargo) {
             var curPct = am4FleetCargoCurrentPct(info) || { l: 100, h: 0 };
@@ -14637,7 +17395,7 @@ function am4FleetOnModPlaneSelect() {
             var cap = info.cargoCap || am4AircraftCargoKg() || 330000;
             var approx = am4CargoPctToDisplayLbs(curPct.l, curPct.h, cap);
             note.innerHTML = 'Maintenance baseline <b>' + curPct.l + '%L / ' + curPct.h + '%H</b>' +
-                (info.cargoSrc === 'assume-100L' ? ' (assumed 100% Large)' : '') +
+                (info.cargoSrc ? (' <span style="color:#64748b;">(' + info.cargoSrc + ')</span>') : '') +
                 ' · cap <b>' + cap.toLocaleString() + '</b> lbs (capacity units). ' +
                 'Display ≈ <b>L' + approx.l.toLocaleString() + ' / H' + approx.h.toLocaleString() +
                 '</b> — Large×0.7 + Heavy = cap, so L+H display is <i>not</i> ' + cap.toLocaleString() +
@@ -14645,9 +17403,28 @@ function am4FleetOnModPlaneSelect() {
                 Math.round(cap * 0.66 * AM4_CARGO_W_L).toLocaleString() + '/H' +
                 Math.round(cap * 0.34).toLocaleString() + '.';
         } else {
-            setV('am4ModE', info.curE); setV('am4ModB', info.curB); setV('am4ModF', info.curF);
+            setV('am4ModE', info.curE); setV('am4ModB', info.curB); setV('am4ModF', charterUi ? 0 : info.curF);
             var noteOff = document.getElementById('am4ModCargoNote');
-            if (noteOff) noteOff.innerText = '';
+            if (!noteOff) {
+                noteOff = document.createElement('div');
+                noteOff.id = 'am4ModCargoNote';
+                noteOff.style.cssText = 'font-size:9px; color:#64748b; margin:2px 0 4px;';
+                var seatRowP = document.getElementById('am4ModE');
+                if (seatRowP && seatRowP.parentElement && seatRowP.parentElement.parentElement) {
+                    seatRowP.parentElement.parentElement.insertAdjacentElement('afterend', noteOff);
+                }
+            }
+            var fromFleetSeats = !info.looksValid || (info.curE === p.y && info.curB === p.j && info.curF === p.f && !/eSeat/i.test(String(info.cargoSrc || '')));
+            noteOff.innerHTML = charterUi
+                ? ('Charter seats <b>' + (info.curE || 0) + 'Y / ' + (info.curB || 0) + 'J</b>' +
+                    (info.looksValid ? ' (from Maintenance panel)' : ' (from fleet row — verify in Maintenance)') +
+                    (!(typeof am4IsCharter === 'function' && am4IsCharter())
+                        ? ' · set ⚙ <b>Aircraft service → Charter</b> for orders/routes.'
+                        : '') + '.')
+                : ('Pax seats <b>' + (info.curE || 0) + 'Y / ' + (info.curB || 0) + 'J / ' + (info.curF || 0) + 'F</b>' +
+                (info.looksValid ? ' (from Maintenance panel)' : ' (from fleet row — verify in Maintenance)') +
+                '. Slot weight = Y + 2×J + 3×F.');
+            void fromFleetSeats;
         }
         [['am4ModCo2','mod1on' ], ['am4ModSpeed','mod2on' ], ['am4ModFuel','mod3on' ]].forEach(function (pair) {
             var cb = document.getElementById(pair[0]);
@@ -14675,7 +17452,33 @@ function am4FleetOnModPlaneSelect() {
             (miss.length ? ('Still missing: ' + miss.join(', ') + '.') : 'All three upgrades are installed.'),
             info.looksValid ? (have.length === 3 ?'#10b981' : '#94a3b8') : '#f59e0b'
         );
-    }).catch(function (e) { am4FleetSetModMsg('Modify read failed: ' + String(e),'#ef4444'); });
+    }).catch(function (e) {
+        // Allow Apply with freighter fallbacks — a dead disabled button looks like "click does nothing".
+        var pFail = am4FleetSelectedModPlane();
+        if (pFail && (pFail.cargo || (typeof am4AircraftLooksFreighter === 'function' && am4AircraftLooksFreighter(pFail.model || pFail.name)))) {
+            am4FleetModCache = {
+                looksValid: false, cargo: true, reason: 'unreadable',
+                curPctL: 100, curPctH: 0, cargoSrc: 'assume-100L',
+                cargoCap: am4AircraftCargoKg() || 330000,
+                mod1on: false, mod2on: false, mod3on: false,
+                mod1cost: 0, mod2cost: 0, mod3cost: 0, at: Date.now()
+            };
+            var seatLabelF = document.getElementById('am4ModSeatLabel');
+            if (seatLabelF) seatLabelF.innerText = 'Large % / Heavy %';
+            var fInputF = document.getElementById('am4ModF');
+            if (fInputF) fInputF.style.display = 'none';
+            var setVF = function (id, v) { var el = document.getElementById(id); if (el) el.value = v; };
+            setVF('am4ModE', 66); setVF('am4ModB', 34); setVF('am4ModF', 0);
+            var applyF = document.getElementById('am4ModApply');
+            if (applyF) { applyF.disabled = false; applyF.style.opacity = '1'; }
+            am4FleetSetModMsg('Modify read failed (' + String(e) + ') — freighter form ready with 66/34. Verify in Maintenance after Apply.','#f59e0b');
+            try { am4FleetUpdateModCost(); } catch (eCost2) { /* ignore */ }
+            return;
+        }
+        am4FleetSetModMsg('Modify read failed: ' + String(e),'#ef4444');
+        var applyFail = document.getElementById('am4ModApply');
+        if (applyFail) { applyFail.disabled = false; applyFail.style.opacity = '1'; }
+    });
 }
 
 function am4FleetReadModForm() {
@@ -14702,6 +17505,10 @@ function am4FleetUpdateModCost() {
         if (!el || !cache) return;
         var f = am4FleetReadModForm();
         var e = isFinite(f.e) ? f.e : 0, b = isFinite(f.b) ? f.b : 0, fst = isFinite(f.f) ? f.f : 0;
+        var charterCost = !cache.cargo && !!(cache.charter || (typeof am4FleetPaxIsCharterLayout === 'function' &&
+            am4FleetPaxIsCharterLayout(cache, am4FleetSelectedModPlane())) ||
+            (typeof am4IsCharter === 'function' && am4IsCharter()));
+        if (charterCost) fst = 0;
         var cost = cache.cargo
             ? am4FleetModifyCost(cache, e, b, f.co2, f.speed, f.fuel)
             : am4FleetModifyCost(cache, b, fst, f.co2, f.speed, f.fuel);
@@ -14721,13 +17528,17 @@ function am4FleetUpdateModCost() {
                 cost.modCost.toLocaleString() + ')' + warnC;
             return;
         }
-        var slots = e + 2 * b + 3 * fst;
+        var slots = charterCost ? (e + 2 * b) : (e + 2 * b + 3 * fst);
         var cap = am4FleetModSlotCap(am4FleetSelectedModPlane());
         var warn = '';
         if (cap && slots > cap) warn =" <span style='color:#ef4444;'>· " + slots +"/" + cap +" slots (too many)</span>" ;
-        else if (e <= 0 || b <= 0 || fst <= 0) warn =" <span style='color:#f59e0b;'>· a 0-seat class stays un-routable</span>" ;
+        else if (charterCost && (e <= 0 || b <= 0)) warn =" <span style='color:#f59e0b;'>· charter needs Y+J &gt; 0</span>" ;
+        else if (!charterCost && (e <= 0 || b <= 0 || fst <= 0)) warn =" <span style='color:#f59e0b;'>· a 0-seat class stays un-routable</span>" ;
         else if (!cap) warn =" <span style='color:#94a3b8;'>· capacity of this model is not tracked — the game refuses an over-capacity config</span>" ;
-        el.innerHTML = 'Seats ' + e + '/' + b + '/' + fst + ' = ' + slots + (cap ?'/' + cap : '') + ' slots · cost <b>$' +
+        el.innerHTML = (charterCost
+            ? ('Seats ' + e + '/' + b + ' (Y/J)')
+            : ('Seats ' + e + '/' + b + '/' + fst)) +
+            ' = ' + slots + (cap ?'/' + cap : '') + ' slots · cost <b>$' +
             cost.total.toLocaleString() + '</b> (seats $' + cost.seatCost.toLocaleString() + ' + upgrades $' + cost.modCost.toLocaleString() + ')' + warn;
     } catch (eCost) {
         try { am4LogAction('mod','🔎 modify cost preview failed: ' + String(eCost)); } catch (eLog) { /* ignore */ }
@@ -14736,11 +17547,27 @@ function am4FleetUpdateModCost() {
 
 // Manual, hard-gated modify. Fails closed; only the acting tab may apply.
 function am4FleetOnModifyClick() {
+    try {
     var p = am4FleetSelectedModPlane();
     var info = am4FleetModCache;
     if (!p || !info) { am4FleetSetModMsg('Pick a plane first.','#ef4444'); return; }
+    if (info.reason === 'away' || info.reason === 'pending') {
+        am4FleetSetModMsg('Blocked: plane not at base / pending maintenance — wait until Parked.','#ef4444');
+        return;
+    }
+    if (am4FleetRowLooksCargo(p) || info.cargo ||
+        (typeof am4AircraftLooksFreighter === 'function' && am4AircraftLooksFreighter(p.model || p.name))) {
+        info.cargo = true;
+        p.cargo = true;
+    }
     var f = am4FleetReadModForm();
     var cargoPct = null;
+    var charterMod = !info.cargo && (typeof am4FleetPaxIsCharterLayout === 'function'
+        ? am4FleetPaxIsCharterLayout(info, p) : (typeof am4IsCharter === 'function' && am4IsCharter()));
+    if (charterMod) {
+        info.charter = true;
+        f.f = 0;
+    }
     if (info.cargo) {
         cargoPct = am4FleetCargoWantToPct(f.e, f.b);
         if (!cargoPct) {
@@ -14749,24 +17576,30 @@ function am4FleetOnModifyClick() {
         }
         f.e = cargoPct.l;
         f.b = cargoPct.h;
+    } else if (charterMod) {
+        if (![f.e, f.b].every(function (x) { return isFinite(x) && x >= 0; })) {
+            am4FleetSetModMsg('Seats must be 0 or more.','#ef4444');
+            return;
+        }
+        f.f = 0;
     } else if (![f.e, f.b, f.f].every(function (x) { return isFinite(x) && x >= 0; })) {
         am4FleetSetModMsg('Seats must be 0 or more.','#ef4444');
         return;
     }
-    var slots = info.cargo ? 100 : (f.e + 2 * f.b + 3 * f.f);
+    var slots = info.cargo ? 100 : (charterMod ? (f.e + 2 * f.b) : (f.e + 2 * f.b + 3 * f.f));
     var slotCap = info.cargo ? 0 : am4FleetModSlotCap(p);
     if (slotCap && slots > slotCap) { am4FleetSetModMsg('Blocked: ' + slots + ' > ' + slotCap + ' slots. Reduce seats.','#ef4444'); return; }
     var curCargoPct = info.cargo ? am4FleetCargoCurrentPct(info) : null;
     var seatsChanged = info.cargo
         ? !(curCargoPct && am4FleetCargoPctClose(curCargoPct, cargoPct))
-        : (f.e !== info.curE || f.b !== info.curB || f.f !== info.curF);
+        : (f.e !== info.curE || f.b !== info.curB || (!charterMod && f.f !== info.curF));
     var newMods = (f.co2 && !info.mod1on) || (f.speed && !info.mod2on) || (f.fuel && !info.mod3on);
     if (!seatsChanged && !newMods) { am4FleetSetModMsg('Nothing to change (same seats, no new upgrades).','#f59e0b'); return; }
     if (am4SuiteResearchBusy()) { am4FleetSetModMsg('Blocked: Research is creating a route. Wait until it finishes.','#ef4444'); return; }
     if (typeof am4CanMutate === 'function' && !am4CanMutate()) { am4FleetSetModMsg('Blocked: another tab is the acting tab.','#ef4444'); return; }
     var cost = info.cargo
         ? am4FleetModifyCost(info, f.e, f.b, f.co2, f.speed, f.fuel)
-        : am4FleetModifyCost(info, f.b, f.f, f.co2, f.speed, f.fuel);
+        : am4FleetModifyCost(info, f.b, charterMod ? 0 : f.f, f.co2, f.speed, f.fuel);
     if (typeof getBankBalance === 'function') { var bal = getBankBalance(); if (bal && cost.total > bal) { am4FleetSetModMsg('Blocked: cost $' + cost.total.toLocaleString() + ' exceeds balance.','#ef4444'); return; } }
 
     var addsUp = [];
@@ -14780,7 +17613,9 @@ function am4FleetOnModifyClick() {
         (info.cargo
             ? ('Slider ' + (curCargoPct ? (curCargoPct.l + '%/' + curCargoPct.h + '%') : '?') +
                 ' → ' + cargoPct.l + '%/' + cargoPct.h + '%')
-            : ('Seats ' + info.curE + '/' + info.curB + '/' + info.curF + ' → ' + f.e + '/' + f.b + '/' + f.f)) +
+            : (charterMod
+                ? ('Seats ' + (info.curE || 0) + '/' + (info.curB || 0) + ' → ' + f.e + '/' + f.b + ' (Y/J)')
+                : ('Seats ' + info.curE + '/' + info.curB + '/' + info.curF + ' → ' + f.e + '/' + f.b + '/' + f.f))) +
         (addsUp.length ?'\nUpgrades: ' + addsUp.join(', ') : '\nNo new upgrades') +
         '\n\nCost: ~$' + cost.total.toLocaleString() + ' (in-game cash) + a modification timer.\n' +
         'The plane is unavailable while it is being modified.' + routedWarn)) {
@@ -14833,12 +17668,25 @@ function am4FleetOnModifyClick() {
                     am4FleetRenderModPicker();
                 } else if (refused) {
                     am4FleetSetModMsg('Modify looks REFUSED by the game. Check funds / that the plane is at base.','#ef4444');
+                    if (apply) { apply.disabled = false; apply.style.opacity = '1'; }
                 } else {
                     am4FleetSetModMsg('Sent — but not yet confirmed (a modify timer may be running). Verify in-game.','#f59e0b');
+                    if (apply) { apply.disabled = false; apply.style.opacity = '1'; }
                 }
-            }).catch(function () { am4FleetSetModMsg('Sent — could not re-read to confirm; verify in-game.','#f59e0b'); });
+            }).catch(function () {
+                am4FleetSetModMsg('Sent — could not re-read to confirm; verify in-game.','#f59e0b');
+                if (apply) { apply.disabled = false; apply.style.opacity = '1'; }
+            });
         }, 2500);
-    }).catch(function (e) { am4FleetSetModMsg('Modify request failed: ' + String(e),'#ef4444'); });
+    }).catch(function (e) {
+        am4FleetSetModMsg('Modify request failed: ' + String(e),'#ef4444');
+        if (apply) { apply.disabled = false; apply.style.opacity = '1'; }
+    });
+    } catch (eClick) {
+        am4FleetSetModMsg('Modify click failed: ' + String(eClick),'#ef4444');
+        var applyE = document.getElementById('am4ModApply');
+        if (applyE) { applyE.disabled = false; applyE.style.opacity = '1'; }
+    }
 }
 
 // ---- Separate 🔧 Modify panel (split out of ✈ Fleet so the Fleet panel stays readable) ----
@@ -14856,7 +17704,11 @@ function am4ModifyTogglePanel() {
 function am4ModifyBuildPanel() {
     var host = document.getElementById('am4FleetModHost');
     var old = document.getElementById('am4ModifyPanel');
-    if (old && host && host.contains(old)) return old;
+    if (old && host && host.contains(old)) {
+        // Panel already mounted — still re-read fleet so newly delivered planes show up.
+        am4FleetRenderModPicker();
+        return old;
+    }
     if (old) old.remove();
     var panel = document.createElement('div');
     panel.id = 'am4ModifyPanel';
@@ -14869,15 +17721,18 @@ function am4ModifyBuildPanel() {
     }
     panel.innerHTML =
         "<div style='display:flex; margin-bottom:6px;'><span style='flex-grow:1; font-size:13px; font-weight:bold; color:#38bdf8; letter-spacing:1px;'>🔧 MODIFY / RECONFIGURE</span>" +
-        "<span id='am4ModifyRefresh' title='Reload aircraft list' style='cursor:pointer; color:#38bdf8; padding:0 6px;'>⟳</span>" +
+        "<span id='am4ModifyRefresh' title='Reload aircraft list + rescan upgrades' style='cursor:pointer; color:#38bdf8; padding:0 6px;'>⟳</span>" +
         "<span id='am4ModifyClose' style='cursor:pointer; color:#ef4444; font-weight:bold; padding:0 4px;'>[X]</span></div>" +
-        "<div style='font-size:10px; color:#f87171; margin:5px 0; line-height:1.4;'>⚠ Spends in-game cash + a modification timer. Reconfigure an aircraft's seats (fixes all-economy → routable) and/or apply CO₂/Speed/Fuel upgrades. Every aircraft in the fleet is listed except those in maintenance, with its model and status; a routed one is pulled off its route while modifying. Already-applied upgrades show ticked &amp; locked.</div>" +
         "<div id='am4ModScanStatus' style='font-size:10px; color:#64748b; margin:2px 0 6px;'></div>" +
         "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:8px; margin:5px 0;'><label style='color:#94a3b8;'>Aircraft</label><select id='am4ModPlane' style='max-width:250px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 5px; font-family:monospace; font-size:12px;'><option>loading…</option></select></div>" +
-        "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:6px; margin:5px 0;'><label id='am4ModSeatLabel' style='color:#94a3b8;'>Seats Y / J / F</label><span style='display:flex; gap:4px;'>" +
+        "<div class='am4-exp-row' style='display:flex; justify-content:space-between; align-items:center; gap:6px; margin:5px 0;'><label id='am4ModSeatLabel' style='color:#94a3b8;'>" +
+        ((typeof am4IsCharter === 'function' && am4IsCharter()) ? 'Seats Y / J' : 'Seats Y / J / F') +
+        "</label><span style='display:flex; gap:4px;'>" +
         "<input type='number' id='am4ModE' min='0' max='" + am4AircraftSeats() +"' style='width:52px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 4px; font-family:monospace;'>" +
         "<input type='number' id='am4ModB' min='0' max='300' style='width:52px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 4px; font-family:monospace;'>" +
-        "<input type='number' id='am4ModF' min='0' max='200' style='width:52px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 4px; font-family:monospace;'></span></div>" +
+        "<input type='number' id='am4ModF' min='0' max='200' style='width:52px; background:#1e293b; border:1px solid #475569; color:#e2e8f0; border-radius:4px; padding:2px 4px; font-family:monospace;" +
+        ((typeof am4IsCharter === 'function' && am4IsCharter()) ? ' display:none;' : '') +
+        "' value='" + ((typeof am4IsCharter === 'function' && am4IsCharter()) ? '0' : '') + "'></span></div>" +
         "<div class='am4-exp-row' style='display:flex; gap:12px; align-items:center; margin:5px 0; font-size:11px; color:#cbd5e1;'>" +
         "<label style='cursor:pointer;'><input type='checkbox' id='am4ModCo2'> CO₂ −10%</label>" +
         "<label style='cursor:pointer;'><input type='checkbox' id='am4ModSpeed'> Speed +10%</label>" +
@@ -14890,7 +17745,9 @@ function am4ModifyBuildPanel() {
         if (host) closeBtn.style.display = 'none';
         else closeBtn.addEventListener('click', function () { panel.style.display = 'none'; am4FleetModScanStop(); });
     }
-    document.getElementById('am4ModifyRefresh').addEventListener('click', am4FleetRenderModPicker);
+    document.getElementById('am4ModifyRefresh').addEventListener('click', function () {
+        am4FleetRenderModPicker();
+    });
     document.getElementById('am4ModPlane').addEventListener('change', am4FleetOnModPlaneSelect);
     var am4ModCostPreview = function () { try { am4FleetUpdateModCost(); } catch (eCost) { /* ignore */ } };
     ['am4ModE','am4ModB','am4ModF' ].forEach(function (id) { document.getElementById(id).addEventListener('input', am4ModCostPreview); });
@@ -14986,8 +17843,8 @@ window.AM4Fleet = {
 //================================================================================
 var AM4_BUILD_QUEUE_KEY = 'am4BuildQueue';
 var AM4_BUILD_AUTORUN_KEY = 'am4BuildAutoRun';
-var AM4_BUILD_TICK_MS = 120000;
-var AM4_BUILD_POLL_MS = 300000; // await-delivery / await-modify re-check spacing
+var AM4_BUILD_TICK_MS = 60000; // was 120s — await/delivery felt "stuck" between checks
+var AM4_BUILD_POLL_MS = 90000; // was 300s; lastPollAt (not note text) gates re-checks
 var am4BuildQueue = [];
 var am4BuildTimer = null;
 var am4BuildBusy = false;
@@ -15250,6 +18107,29 @@ function am4BuildBannerText() {
 function am4BuildEnqueue(job) {
     var p = am4AircraftProfile();
     job.typeId = job.typeId || p.typeId;
+    // Freighter selected in Fleet/Explorer must stay cargo even if the click flag was lost.
+    if (!job.cargo && (p.cargo || am4AircraftLooksFreighter(p.name) || am4AircraftIsCargo())) {
+        job.cargo = true;
+    }
+    // Stop "built the same route 10 times": one active job per type+hub+dest.
+    var destKey = String(job.destIcao || '').toUpperCase();
+    var hubKey = String(job.hubName || '').split(',')[0].trim().toLowerCase();
+    var typeKey = Number(job.typeId) || 0;
+    if (destKey) {
+        var dup = am4BuildQueue.filter(function (j) {
+            if (!j || AM4_BUILD_ACTIVE.indexOf(j.state) === -1) return false;
+            if ((Number(j.typeId) || 0) !== typeKey) return false;
+            if (String(j.destIcao || '').toUpperCase() !== destKey) return false;
+            var jh = String(j.hubName || '').split(',')[0].trim().toLowerCase();
+            return !hubKey || !jh || jh === hubKey;
+        })[0];
+        if (dup) {
+            console.log('[AM4 Bot Log] Build skipped duplicate: ' + destKey +
+                ' already ' + dup.state + ' (' + (dup.note || 'queued') + ')');
+            am4BuildRenderQueue();
+            return dup;
+        }
+    }
     var bestEng = am4AircraftFastestEngine(p.engines, p.typeId, p.name);
     job.engineId = (bestEng && bestEng.id) || job.engineId || p.engineId;
     job.engineName = (bestEng && bestEng.name) || job.engineName || p.engineName;
@@ -15261,20 +18141,24 @@ function am4BuildEnqueue(job) {
         job.e = Math.max(0, parseInt(job.e, 10) || 0);
         job.b = Math.max(0, parseInt(job.b, 10) || 0);
         job.f = Math.max(0, parseInt(job.f, 10) || 0);
-        if (job.e + job.b + job.f < 3) {
+        if (typeof am4IsCharter === 'function' && am4IsCharter()) job.f = 0;
+        var minClasses = (typeof am4IsCharter === 'function' && am4IsCharter()) ? 2 : 3;
+        if (job.e + job.b + job.f < minClasses) {
             job.e = job.e || p.orderY || 0;
             job.b = job.b || p.orderJ || 0;
-            job.f = job.f || p.orderF || 0;
+            job.f = (typeof am4IsCharter === 'function' && am4IsCharter()) ? 0 : (job.f || p.orderF || 0);
         }
-        if (job.e + job.b + job.f < 3 && (p.orderY || p.orderJ || p.orderF)) {
+        if (job.e + job.b + job.f < minClasses && (p.orderY || p.orderJ || p.orderF)) {
             job.e = p.orderY || job.e;
             job.b = p.orderJ || job.b;
-            job.f = p.orderF || job.f;
+            job.f = (typeof am4IsCharter === 'function' && am4IsCharter()) ? 0 : (p.orderF || job.f);
         }
         var cap = am4AircraftSeats();
         var expCfg = (typeof am4ExpLoadCfg === 'function') ? am4ExpLoadCfg() : {};
-        var topOrder = (expCfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ];
-        var norm = am4PaxSeatNormalize(job.e, job.b, job.f, cap, topOrder);
+        var topOrder = (typeof am4PaxFillTopOrder === 'function')
+            ? am4PaxFillTopOrder(expCfg)
+            : ((expCfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ]);
+        var norm = am4PaxSeatEnsureRoutable(job.e, job.b, job.f, cap, topOrder);
         job.e = norm.y; job.b = norm.j; job.f = norm.f;
     }
     job.id = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -15289,6 +18173,11 @@ function am4BuildEnqueue(job) {
 }
 
 function am4BuildSetState(job, state, note) {
+    // Never resurrect a cancelled job from an in-flight fetch that finishes after Cancel.
+    if (job.state === 'cancelled' && state !== 'cancelled') {
+        console.log('[AM4 Bot Log] Build ' + job.destIcao + ' ignored → ' + state + ' (already cancelled)');
+        return;
+    }
     job.state = state; job.note = note || ''; job.updatedAt = Date.now();
     if (state === 'done') {
         am4BuildQueue = am4BuildQueue.filter(function (j) { return j.id !== job.id; });
@@ -15298,7 +18187,16 @@ function am4BuildSetState(job, state, note) {
     var _al = { await_delivery: 'ordered (' + am4BuildCostLabel(job) + ')', modify: 'delivered', await_modify: 'modifying (CO2/Speed/Fuel)', route: 'modified', done: 'ROUTED ✓', error: ('error — ' + (note || '')) }[state];
     if (_al) am4LogAction('build','🏗 ' + job.destIcao + ': ' + _al);
 }
-function am4BuildNote(job, note) { job.note = note; job.updatedAt = Date.now(); am4BuildSaveQueue(); am4BuildRenderQueue(); }
+function am4BuildNote(job, note) {
+    if (!job || job.state === 'cancelled') return;
+    job.note = note; job.updatedAt = Date.now(); am4BuildSaveQueue(); am4BuildRenderQueue();
+}
+
+function am4BuildCancelJob(job) {
+    if (!job || job.state === 'cancelled' || job.state === 'done') return;
+    if (typeof am4FleetWatchDropForBuildJob === 'function') am4FleetWatchDropForBuildJob(job);
+    am4BuildSetState(job, 'cancelled', 'cancelled by user');
+}
 
 // Gate for a spend step; returns a reason string when blocked, or null when OK to spend.
 function am4BuildCanSpend(cost) {
@@ -15319,13 +18217,138 @@ function am4BuildCanSpend(cost) {
     return null;
 }
 
-// A parked A380 with this reg not already claimed by another active job (arrived + available).
+// A parked plane with this reg (or dest / dest-N) not already claimed by another active job.
 function am4BuildFindParkedByReg(reg) {
     var claimed = {};
-    am4BuildQueue.forEach(function (j) { if (j.planeId) claimed[j.planeId] = 1; });
-    return am4FleetListParkedA380().then(function (list) {
-        return list.filter(function (p) { return String(p.reg).toUpperCase() === String(reg).toUpperCase() && !claimed[p.planeId]; })[0] || null;
+    am4BuildQueue.forEach(function (j) { if (j.planeId) claimed[String(j.planeId)] = 1; });
+    var want = String(reg || '').toUpperCase().trim();
+    return am4FleetListAllRows(true).then(function (rows) {
+        var list = rows.filter(function (p) {
+            return AM4_FLEET_AT_BASE_RE.test(p.status) && !claimed[String(p.planeId)];
+        });
+        return list.filter(function (p) {
+            var r = String(p.reg || '').toUpperCase().trim();
+            return r && (r === want || (want && (r === want || r.indexOf(want + '-') === 0)));
+        })[0] || null;
     });
+}
+
+// Delivery match for an Auto-Build job: exact orderReg, dest ICAO, dest-N, or sole same-type match.
+// Also claims an unclaimed game-default N-### freighter/pax when the job is waiting and no
+// dest-named plane exists (orders that lost `r=` used to land as N-382 etc.).
+function am4BuildFindDeliveredPlane(job) {
+    var claimed = {};
+    am4BuildQueue.forEach(function (j) {
+        if (j && j !== job && j.planeId) claimed[String(j.planeId)] = 1;
+    });
+    return am4FleetListAllRows(true).then(function (rows) {
+        var atBase = rows.filter(function (p) {
+            return AM4_FLEET_AT_BASE_RE.test(p.status || '') && !claimed[String(p.planeId)];
+        });
+        var order = String(job.orderReg || '').toUpperCase().trim();
+        var dest = String(job.destIcao || '').toUpperCase().trim();
+        var hit = atBase.filter(function (p) {
+            var r = String(p.reg || '').toUpperCase().trim();
+            if (!r) return false;
+            if (order && (r === order || r.indexOf(order + '-') === 0)) return true;
+            if (dest && (r === dest || r.indexOf(dest + '-') === 0)) return true;
+            if (dest && String(p.intendedDestIcao || '').toUpperCase() === dest) return true;
+            return false;
+        })[0];
+        if (hit) return hit;
+        if (job.typeId) {
+            var same = atBase.filter(function (p) {
+                if (Number(p.typeId) !== Number(job.typeId)) return false;
+                if (job.cargo && !p.cargo) return false;
+                if (!job.cargo && p.cargo) return false;
+                return am4BuildRegMatchesDest(p.reg, dest);
+            });
+            if (same.length === 1) return same[0];
+        }
+        // Recovery: game auto-named N-### when `r` was dropped on order.
+        if (job.state === 'await_delivery' && job.typeId) {
+            var waiting = am4BuildQueue.filter(function (j) {
+                return j && j !== job && j.state === 'await_delivery' &&
+                    Number(j.typeId) === Number(job.typeId) && !!j.cargo === !!job.cargo;
+            });
+            var orphans = atBase.filter(function (p) {
+                if (Number(p.typeId) !== Number(job.typeId)) return false;
+                if (job.cargo && !p.cargo) return false;
+                if (!job.cargo && p.cargo) return false;
+                var r = String(p.reg || '').toUpperCase().trim();
+                if (!/^N-\d+/i.test(r)) return false;
+                // Skip if another waiting job already reserved this hangar name.
+                var reserved = am4BuildQueue.some(function (j) {
+                    return j && j !== job && j.hangarReg &&
+                        String(j.hangarReg).toUpperCase() === r;
+                });
+                return !reserved;
+            });
+            if (orphans.length) {
+                orphans.sort(function (a, b) {
+                    return String(a.reg || '').localeCompare(String(b.reg || ''), undefined, { numeric: true });
+                });
+                // FIFO: earliest await_delivery job among siblings claims the lowest N-###.
+                var siblings = am4BuildQueue.filter(function (j) {
+                    return j && j.state === 'await_delivery' &&
+                        Number(j.typeId) === Number(job.typeId) && !!j.cargo === !!job.cargo &&
+                        !j.planeId;
+                }).slice().sort(function (a, b) {
+                    return (a.orderedAt || a.createdAt || 0) - (b.orderedAt || b.createdAt || 0);
+                });
+                var myIdx = siblings.indexOf(job);
+                if (myIdx < 0) myIdx = 0;
+                if (myIdx < orphans.length && orphans.length >= waiting.length) {
+                    console.log('[AM4 Bot Log] Build claim orphan ' + orphans[myIdx].reg +
+                        ' for job ' + (job.orderReg || job.destIcao) + ' (will rename on route)');
+                    return orphans[myIdx];
+                }
+                if (orphans.length === 1 && siblings.length === 1) return orphans[0];
+            }
+        }
+        return null;
+    });
+}
+
+function am4BuildPickOrderReg(job, fleet) {
+    var base = String(job.destIcao || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) base = String(job.orderReg || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) return '';
+    if (base.length > 8) base = base.slice(0, 8);
+    var taken = {};
+    (fleet || []).forEach(function (p) {
+        if (p && p.reg) taken[String(p.reg).toUpperCase()] = 1;
+    });
+    am4BuildQueue.forEach(function (j) {
+        if (j && j !== job && j.orderReg) taken[String(j.orderReg).toUpperCase()] = 1;
+        if (j && j !== job && j.hangarReg) taken[String(j.hangarReg).toUpperCase()] = 1;
+    });
+    var reg = base, seq = 2;
+    while (taken[reg.toUpperCase()]) {
+        var suffix = '-' + seq;
+        var slim = base;
+        if ((slim + suffix).length > 10) slim = base.slice(0, Math.max(1, 10 - suffix.length));
+        reg = slim + suffix;
+        seq++;
+        if (seq > 99) break;
+    }
+    return reg;
+}
+
+function am4BuildRouteRegName(job, acOnRoute) {
+    // Always name for the destination ICAO (never a random hangar / type-prefix reg).
+    var base = String(job.destIcao || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) {
+        base = String(job.orderReg || 'N').toUpperCase().replace(/[^A-Z0-9-]/g, '');
+        var strip = base.match(/^([A-Z]{3,4})(?:-\d+)?$/);
+        if (strip) base = strip[1];
+    }
+    if (!base) base = 'N';
+    if (base.length > 8) base = base.slice(0, 8);
+    var n = Math.max(0, parseInt(acOnRoute, 10) || 0);
+    var reg = n > 0 ? (base + '-' + (n + 1)) : base;
+    if (reg.length > 10) reg = reg.slice(0, 10);
+    return reg;
 }
 
 // Plane reg is the route name (dest ICAO, or dest-2 if taken).
@@ -15347,6 +18370,19 @@ function am4BuildJobAlreadyRouted(plane, job) {
 function am4BuildBackfillCargoFromExplorer(job) {
     if (!job || !job.cargo) return;
     if ((Number(job.loadL) > 0 || Number(job.loadH) > 0) && job.pctL != null && job.pctL + (job.pctH || 0) > 0) return;
+    if (job.destId && typeof am4FleetExplorerRouteForDest === 'function') {
+        var g0 = am4FleetExplorerRouteForDest(job.destId);
+        if (g0) {
+            if (g0.conf && typeof am4CargoApplyConfigToJob === 'function') {
+                am4CargoApplyConfigToJob(job, g0.conf);
+                return;
+            }
+            if (g0.cfg && (g0.cfg.l || g0.cfg.h) && typeof am4CargoLoadToConfig === 'function') {
+                am4CargoApplyConfigToJob(job, am4CargoLoadToConfig(g0.cfg.l || 0, g0.cfg.h || 0));
+                return;
+            }
+        }
+    }
     var dest = String(job.destIcao || '').toUpperCase();
     if (!dest) return;
     var results = (typeof am4ExpResults !== 'undefined' && am4ExpResults) ? am4ExpResults : {};
@@ -15369,6 +18405,9 @@ function am4BuildBackfillCargoFromExplorer(job) {
 
 // Advance ONE job by one step (returns a Promise). Every spend is gated + fail-closed.
 function am4BuildAdvanceJob(job) {
+    if (!job || job.state === 'cancelled' || job.state === 'done' || job.state === 'error') {
+        return Promise.resolve();
+    }
     if (job && job.cargo) am4BuildBackfillCargoFromExplorer(job);
     if (job.state === 'order') {
         // One fleet read (parked+routed) serves BOTH the reuse check and the unique-name set.
@@ -15393,17 +18432,11 @@ function am4BuildAdvanceJob(job) {
                 if (r.id) job.hubOrderId = r.id;
                 else { am4BuildSetState(job,'error', r.why); return; }
             }
-            // UNIQUE plane registration. The game REFUSES a 2nd aircraft whose reg is already in
-            // use (live-confirmed 2026-08-14: the same dest queued from two hubs → the 2nd order
-            // was rejected while the 1st was still pending). Name the plane dest, dest-2, dest-3…
-            // skipping any reg already in the fleet (parked+routed) OR already claimed by another
-            // queued job (covers a pending sibling that hasn't been delivered into the fleet yet).
-            var taken = {};
-            fleet.forEach(function (p) { if (p.reg) taken[String(p.reg).toUpperCase()] = 1; });
-            am4BuildQueue.forEach(function (j) { if (j !== job && j.orderReg) taken[String(j.orderReg).toUpperCase()] = 1; });
-            var base = String(job.destIcao), reg = base, seq = 2;
-            while (taken[reg.toUpperCase()]) { reg = base + '-' + seq; seq++; }
-            job.orderReg = reg; // unique across the fleet + the queue (user convention: named for its dest)
+            // UNIQUE plane registration: dest, dest-2, dest-3… (never game auto N-XXX).
+            var reg = am4BuildPickOrderReg(job, fleet);
+            if (!reg) { am4BuildSetState(job,'error','missing dest ICAO — cannot name order'); return; }
+            job.orderReg = reg;
+            job.orderedAt = Date.now();
             var typeId = job.typeId || am4AircraftTypeId();
             var prof = am4AircraftProfile();
             var orderCfg;
@@ -15452,6 +18485,22 @@ function am4BuildAdvanceJob(job) {
                 job.hSeat = orderCfg.hSeat != null ? orderCfg.hSeat : ((orderCfg.cargoAft || 0) + (orderCfg.cargoFwd || 0));
                 job.pctL = job.lSeat;
                 job.pctH = job.hSeat;
+                var shell = document.createElement('div');
+                shell.innerHTML = '<input id="cargoAft"><input id="cargoFwd"><input id="cargoAftH"><input id="cargoFwdH">';
+                var normO = am4FleetApplyCargoLoadToHost(shell, orderCfg);
+                orderCfg = Object.assign(orderCfg, normO.cfg, { cargo: true, lSeat: normO.l, hSeat: normO.h });
+                job.cargoAft = orderCfg.cargoAft;
+                job.cargoFwd = orderCfg.cargoFwd;
+                job.cargoAftH = orderCfg.cargoAftH;
+                job.cargoFwdH = orderCfg.cargoFwdH;
+                job.lSeat = normO.l;
+                job.hSeat = normO.h;
+                job.pctL = job.lSeat;
+                job.pctH = job.hSeat;
+                if ((job.pctL + job.pctH) < 1) {
+                    am4BuildSetState(job,'error','cargo L/H still empty after normalize — re-queue from Explorer');
+                    return;
+                }
             } else {
                 if (((job.e || 0) + (job.b || 0) + (job.f || 0)) < 3) {
                     am4BuildSetState(job,'error','seating empty — cannot order (re-queue from Explorer)');
@@ -15459,7 +18508,8 @@ function am4BuildAdvanceJob(job) {
                 }
                 orderCfg = { e: job.e, b: job.b, f: job.f, cargo: false };
             }
-            am4BuildSetState(job,'await_delivery','ordering ' + job.orderReg + '…');
+            // Stay in 'order' until the game confirms Pending rose — avoid a false "ordered" flash.
+            am4BuildNote(job, 'ordering ' + job.orderReg + '…');
             // Engines are permanent once delivered — always order the fastest available.
             return am4AircraftEnsureFastestEngine(typeId).then(function (eng) {
                 if (eng) {
@@ -15469,39 +18519,91 @@ function am4BuildAdvanceJob(job) {
                     orderCfg.engineId = eng.id;
                     am4BuildNote(job, 'ordering ' + job.orderReg + ' with ' +
                         (eng.name || ('engine ' + eng.id)) +
-                        (eng.speed ? (' (' + eng.speed + ' kph)') : '') + '…');
+                        (eng.speed ? (' (' + eng.speed + ' kph)') : '') +
+                        (orderCfg.cargo ? (' · L' + job.pctL + '%/H' + job.pctH + '%') : '') +
+                        '…');
                 } else if (job.engineId) {
                     orderCfg.engineId = job.engineId;
                 }
                 return am4FleetLoadOrderBindings();
             }).then(function () {
                 if (orderCfg.cargo) {
+                    // Real purchase is #btnPurchaseCargoDo (guessed ac_order_do URLs are ignored).
                     return am4FleetPlaceCargoViaGameButton(job.hubOrderId, job.hubName, orderCfg, job.orderReg);
                 }
                 return am4FleetPlacePaxViaOrderUrl(job.hubOrderId, job.hubName, job.orderReg, orderCfg);
             }).then(function (res) {
+                if (res && res.hubId) job.hubOrderId = String(res.hubId);
                 if (!res || res.refused || res.bindFail || res.ok === false) {
+                    if (res && res.delta != null && res.delta >= 1) {
+                        am4BuildSetState(job, 'await_delivery',
+                            'ordered ' + job.orderReg +
+                            (job.engineName ? (' · ' + job.engineName) : '') +
+                            ' — waiting ~5h for delivery (pending +' + res.delta + ')');
+                        return;
+                    }
                     var why = (res && res.hint) ? res.hint : 'order refused by game';
                     am4BuildSetState(job,'error', why);
                     return;
                 }
-                am4BuildNote(job,'ordered ' + job.orderReg +
+                if (res && res.reg) job.orderReg = String(res.reg);
+                am4BuildSetState(job, 'await_delivery',
+                    'ordered ' + job.orderReg +
                     (job.engineName ? (' · ' + job.engineName) : '') +
-                    ' — waiting ~5h for delivery');
+                    (orderCfg.cargo ? (' · L' + (job.pctL || 0) + '%/H' + (job.pctH || 0) + '%') : '') +
+                    ' — waiting ~5h for delivery' +
+                    (res.delta != null ? (' (pending +' + res.delta + ')') : ''));
             }).catch(function (e) { am4BuildSetState(job,'error','order request failed: ' + e); });
         });
     }
     if (job.state === 'await_delivery') {
-        am4BuildNote(job, 'checking hangar for ' + (job.orderReg || job.destIcao) + '…');
-        return am4BuildFindParkedByReg(job.orderReg || job.destIcao).then(function (p) {
-            if (p) { job.planeId = p.planeId; am4BuildSetState(job,'modify','delivered (' + p.reg + ')'); }
+        if (job.state === 'cancelled') return Promise.resolve();
+        job.lastPollAt = Date.now();
+        am4BuildSaveQueue();
+        return am4BuildFindDeliveredPlane(job).then(function (p) {
+            if (job.state === 'cancelled') return;
+            if (p) {
+                if (typeof am4FleetBustFleetCaches === 'function') am4FleetBustFleetCaches();
+                job.planeId = String(p.planeId);
+                // Keep dest-based orderReg for rename; hangar name is only a lookup hint.
+                if (p.reg) job.hangarReg = String(p.reg).trim();
+                if (p.reg && am4BuildRegMatchesDest(p.reg, job.destIcao)) {
+                    job.orderReg = String(p.reg).trim();
+                } else if (!job.orderReg && job.destIcao) {
+                    job.orderReg = String(job.destIcao).toUpperCase();
+                }
+                am4BuildSetState(job,'modify','delivered (' + (p.reg || job.orderReg) + ')');
+                if (typeof am4FleetRenderModPicker === 'function') am4FleetRenderModPicker();
+            }
             else am4BuildNote(job, 'not in hangar yet — still pending (' + (job.orderReg || job.destIcao) + ')');
         });
     }
     if (job.state === 'modify') {
         if (!job.planeId) { am4BuildSetState(job,'error','lost plane id'); return Promise.resolve(); }
-        return am4FleetFetchModifyInfo(job.planeId).then(function (info) {
+        // Already submitted once — never re-plan (each do resets the ~12h timer).
+        if (job.modifySubmitted) {
+            am4BuildSetState(job, 'await_modify', 'modify already sent — waiting for timer');
+            return Promise.resolve();
+        }
+        return am4FleetListAllRows(true).then(function (rows) {
+            var planeRow = (rows || []).filter(function (x) {
+                return String(x.planeId) === String(job.planeId);
+            })[0];
+            if (planeRow && /Maintenance/i.test(planeRow.status || '')) {
+                job.modifySubmitted = true;
+                am4BuildSetState(job, 'await_modify', 'already in maintenance — waiting');
+                return null;
+            }
+            return am4FleetFetchModifyInfo(job.planeId);
+        }).then(function (info) {
+            if (info == null && job.state === 'await_modify') return;
+            if (job.state === 'cancelled') return;
             if (info && info.paused) { am4BuildNote(job,'waiting: Research is using an aircraft'); return; }
+            if (info && info.reason === 'pending') {
+                job.modifySubmitted = true;
+                am4BuildSetState(job, 'await_modify', 'modify timer already running');
+                return;
+            }
             if (!info || !info.looksValid) { am4BuildNote(job,'cannot read modify panel — retrying'); return; }
             var est = (info.mod1cost || 0) + (info.mod2cost || 0) + (info.mod3cost || 0);
             if (est > 0 && job.typeId === am4AircraftTypeId()) {
@@ -15509,30 +18611,42 @@ function am4BuildAdvanceJob(job) {
                 job.modCost = est;
             }
             var e, b, f;
+            // Job queued as freighter — never fall through to Y/J/F seat math.
+            if (job.cargo) info.cargo = true;
             if (info.cargo) {
-                // Prefer lbs/kg; ApplyCargoModifyViaGame maps to the form's native units.
-                if (job.loadL > 0 || job.loadH > 0) {
-                    e = job.loadL; b = job.loadH;
-                } else if (job.lSeat != null || job.hSeat != null || job.pctL != null) {
-                    e = job.lSeat != null ? job.lSeat : (job.pctL || 0);
-                    b = job.hSeat != null ? job.hSeat : (job.pctH || 0);
+                // Always drive modify from research % (not raw kg) so large=/heavy= match the slider.
+                if ((job.pctL != null || job.lSeat != null) &&
+                    ((job.pctL || job.lSeat || 0) + (job.pctH || job.hSeat || 0)) > 0) {
+                    e = job.pctL != null ? job.pctL : job.lSeat;
+                    b = job.pctH != null ? job.pctH : job.hSeat;
+                } else if (job.loadL > 0 || job.loadH > 0) {
+                    var confM = am4CargoLoadToConfig(job.loadL, job.loadH);
+                    e = confM.pctL; b = confM.pctH;
+                    job.pctL = confM.pctL; job.pctH = confM.pctH;
                 } else {
                     var jobL = (job.cargoAftH || 0) + (job.cargoFwdH || 0);
                     var jobH = (job.cargoAft || 0) + (job.cargoFwd || 0);
                     if (jobL + jobH > 0) { e = jobL; b = jobH; }
-                    else { e = info.curL || 0; b = info.curH || 0; }
+                    else { e = info.curPctL || 0; b = info.curPctH || 0; }
                 }
-                var wantPct = am4FleetCargoToGamePct(e, b);
+                var wantPct = am4FleetCargoWantToPct(e, b);
                 f = 0;
-                var curPctM = am4FleetCargoToGamePct(info.curL, info.curH);
+                var curPctM = am4FleetCargoCurrentPct(info);
                 if (info.mod1on && info.mod2on && info.mod3on && am4FleetCargoPctClose(curPctM, wantPct)) {
                     am4BuildSetState(job,'route','already fully modified');
                     return;
                 }
-                if ((e + b) < 1) {
+                // Mods already on — do not re-fire modify (resets 12h timer).
+                if (info.mod1on && info.mod2on && info.mod3on) {
+                    am4BuildSetState(job,'route','upgrades on — routing (L/H left as-is)');
+                    return;
+                }
+                if (!wantPct || (wantPct.l + wantPct.h) < 1) {
                     am4BuildNote(job,'waiting: cargo L/H from research is empty — re-queue from Explorer');
                     return;
                 }
+                e = wantPct.l;
+                b = wantPct.h;
             } else {
                 if (info.mod1on && info.mod2on && info.mod3on) { am4BuildSetState(job,'route','already fully modified'); return; }
                 var cap = am4AircraftSeats();
@@ -15547,34 +18661,74 @@ function am4BuildAdvanceJob(job) {
             var modCost = (info.mod1on ? 0 : info.mod1cost) + (info.mod2on ? 0 : info.mod2cost) + (info.mod3on ? 0 : info.mod3cost);
             var gate = am4BuildCanSpend(modCost);
             if (gate) { am4BuildNote(job,'waiting to modify: ' + gate); return; }
+            job.modAttempts = (job.modAttempts || 0) + 1;
+            if (job.modAttempts > 2) {
+                am4BuildSetState(job,'route','modify retried enough — routing with current config');
+                return;
+            }
+            job.modifySubmitted = true;
+            job.modifySentAt = Date.now();
             am4BuildSetState(job,'await_modify','modifying (CO2/Speed/Fuel)…');
             if (info.cargo) {
-                console.log('[AM4 Bot Log] Build cargo modifying via game form L=' + e + ' H=' + b);
+                console.log('[AM4 Bot Log] Build cargo modifying ONCE via game form L=' + e + '% H=' + b + '%');
                 return am4FleetApplyCargoModifyViaGame(job.planeId, e, b, true, true, true).then(function (res) {
-                    if (res && res.refused) am4BuildSetState(job,'error','modify refused');
-                    else am4BuildNote(job,'modifying — waiting for the timer');
-                }).catch(function (err) { am4BuildSetState(job,'error','modify request failed: ' + err); });
+                    if (job.state === 'cancelled') return;
+                    if (res && res.refused) {
+                        job.modifySubmitted = false;
+                        am4BuildSetState(job,'error','modify refused');
+                    } else am4BuildNote(job,'modifying — waiting for the timer (do not re-submit)');
+                }).catch(function (err) {
+                    job.modifySubmitted = false;
+                    am4BuildSetState(job,'error','modify request failed: ' + err);
+                });
             }
             var url = am4FleetBuildModifyUrl(job.planeId, e, b, f, true, true, true, false);
-            console.log('[AM4 Bot Log] Build modifying: ' + url);
+            console.log('[AM4 Bot Log] Build modifying ONCE: ' + url);
             return fetch(url, { credentials: 'include'}).then(function (r) { return r.text(); }).then(function (body) {
-                if (/too low|not enough|insufficient|denied|invalid|failed/i.test(body || '')) am4BuildSetState(job,'error','modify refused');
-                else am4BuildNote(job,'modifying — waiting for the timer');
-            }).catch(function (err) { am4BuildSetState(job,'error','modify request failed: ' + err); });
+                if (job.state === 'cancelled') return;
+                if (/too low|not enough|insufficient|denied|invalid|failed/i.test(body || '')) {
+                    job.modifySubmitted = false;
+                    am4BuildSetState(job,'error','modify refused');
+                } else am4BuildNote(job,'modifying — waiting for the timer (do not re-submit)');
+            }).catch(function (err) {
+                job.modifySubmitted = false;
+                am4BuildSetState(job,'error','modify request failed: ' + err);
+            });
         });
     }
     if (job.state === 'await_modify') {
-        am4BuildNote(job, 'checking modify timer…');
-        return am4FleetFetchModifyInfo(job.planeId).then(function (info) {
+        job.lastPollAt = Date.now();
+        am4BuildSaveQueue();
+        return am4FleetListAllRows(true).then(function (rows) {
+            var planeRow = (rows || []).filter(function (x) {
+                return String(x.planeId) === String(job.planeId);
+            })[0];
+            if (planeRow && /Maintenance/i.test(planeRow.status || '')) {
+                am4BuildNote(job, 'modify timer still running');
+                return null;
+            }
+            return am4FleetFetchModifyInfo(job.planeId);
+        }).then(function (info) {
+            if (info == null) return;
+            if (job.state === 'cancelled') return;
+            if (job.cargo && info) info.cargo = true;
+            if (info.reason === 'pending') {
+                am4BuildNote(job, 'modify timer still running');
+                return;
+            }
             if (info && info.looksValid && info.mod1on && info.mod2on && info.mod3on) {
-                if (info.cargo && (job.pctL != null || job.lSeat != null || job.loadL > 0)) {
-                    var wantM = am4FleetCargoToGamePct(
+                if (info.cargo && (job.pctL != null || job.lSeat != null || job.loadL > 0 || job.loadH > 0)) {
+                    var wantM = am4FleetCargoWantToPct(
                         job.pctL != null ? job.pctL : (job.lSeat != null ? job.lSeat : job.loadL),
                         job.pctH != null ? job.pctH : (job.hSeat != null ? job.hSeat : job.loadH)
                     );
-                    var haveM = am4FleetCargoToGamePct(info.curL, info.curH);
-                    if (wantM && !am4FleetCargoPctClose(wantM, haveM)) {
-                        am4BuildSetState(job, 'modify', 'L/H not at research % — retrying');
+                    var haveM = am4FleetCargoCurrentPct(info);
+                    if (wantM && haveM && !am4FleetCargoPctClose(wantM, haveM)) {
+                        // Do NOT bounce back to modify — that restarts the 12h timer.
+                        console.log('[AM4 Bot Log] Build L/H after mods want=' +
+                            wantM.l + '/' + wantM.h + ' have=' + haveM.l + '/' + haveM.h +
+                            ' — routing anyway (no second modify)');
+                        am4BuildSetState(job,'route','upgrades on — L/H left as-is');
                         return;
                     }
                 }
@@ -15587,8 +18741,9 @@ function am4BuildAdvanceJob(job) {
     }
     if (job.state === 'route') {
         if (!job.planeId) { am4BuildSetState(job,'error','lost plane id'); return Promise.resolve(); }
-        return am4FleetListAllRows().then(function (rows) {
-            var p = rows.filter(function (x) { return x.planeId === job.planeId; })[0];
+        return am4FleetListAllRows(true).then(function (rows) {
+            if (job.state === 'cancelled') return;
+            var p = rows.filter(function (x) { return String(x.planeId) === String(job.planeId); })[0];
             if (!p) { am4BuildNote(job,'plane not found in fleet — retrying'); return; }
             if (am4BuildJobAlreadyRouted(p, job)) {
                 am4BuildSetState(job,'done','already routed ✓');
@@ -15598,8 +18753,12 @@ function am4BuildAdvanceJob(job) {
                 am4BuildNote(job,'waiting: plane not parked yet (modify timer?)');
                 return;
             }
-            if (!p.cargo && (p.y <= 0 || p.j <= 0 || p.f <= 0)) {
-                am4BuildSetState(job,'error','plane has a 0-seat class — cannot route');
+            if (!p.cargo && (typeof am4PaxIsRoutable === 'function'
+                ? !am4PaxIsRoutable(p.y, p.j, p.f)
+                : (p.y <= 0 || p.j <= 0 || p.f <= 0))) {
+                am4BuildSetState(job,'error', am4IsCharter()
+                    ? 'plane needs Economy+Business seats — cannot route'
+                    : 'plane has a 0-seat class — cannot route');
                 return;
             }
             var gate = am4BuildCanSpend(1500000);
@@ -15607,7 +18766,9 @@ function am4BuildAdvanceJob(job) {
             return am4FleetFetchRouteConfig(job.planeId, job.destId).then(function (rc) {
                 if (!rc || !rc.hasCreate) { am4BuildSetState(job,'error','route panel not available'); return; }
                 if (rc.distKm && rc.rangeKm && rc.distKm > rc.rangeKm) { am4BuildSetState(job,'error','out of range'); return; }
-                var reg = (job.orderReg || job.destIcao) + (rc.acOnRoute > 0 ?'-2' : '');
+                // Route name = dest (or dest-N) — this is what renames the aircraft in-game.
+                var reg = am4BuildRouteRegName(job, rc.acOnRoute);
+                job.orderReg = reg;
                 var isCargo = !!(p.cargo || job.cargo || rc.looksCargo || (rc.nativePrices && rc.nativePrices.type === 'cargo'));
                 var prices = am4FleetPricePlan(rc, isCargo);
                 if (!prices) {
@@ -15618,17 +18779,18 @@ function am4BuildAdvanceJob(job) {
                 }
                 var url = am4FleetBuildRouteUrl(job.planeId, job.destId, reg, prices, 200);
                 if (!url) { am4BuildSetState(job,'error','could not build route URL'); return; }
-                am4BuildNote(job,'creating route…');
-                console.log('[AM4 Bot Log] Build routing ' + prices.type + ' with multiplied ticket prices (' + prices.source + '): ' + url);
+                am4BuildNote(job,'creating route as ' + reg + '…');
+                console.log('[AM4 Bot Log] Build routing ' + prices.type + ' name=' + reg +
+                    ' with multiplied ticket prices (' + prices.source + '): ' + url);
                 return fetch(url, { credentials: 'include'}).then(function (r) { return r.text(); }).then(function () {
-                    return am4FleetListAllRows().then(function (after) {
-                        var plane = after.filter(function (x) { return x.planeId === job.planeId; })[0];
+                    return am4FleetListAllRows(true).then(function (after) {
+                        var plane = after.filter(function (x) { return String(x.planeId) === String(job.planeId); })[0];
                         if (plane && am4BuildJobAlreadyRouted(plane, job)) {
-                            am4BuildSetState(job,'done','route created — plane routed ✓');
+                            am4BuildSetState(job,'done','route created — ' + reg + ' routed ✓');
                         } else if (plane && AM4_FLEET_AT_BASE_RE.test(plane.status)) {
                             am4BuildNote(job,'route sent, plane still parked — will re-check');
                         } else if (plane && /Routed/i.test(plane.status)) {
-                            am4BuildSetState(job,'done','route created — plane routed ✓');
+                            am4BuildSetState(job,'done','route created — ' + (plane.reg || reg) + ' routed ✓');
                         } else {
                             am4BuildNote(job,'route sent — waiting for fleet status to update');
                         }
@@ -15640,10 +18802,13 @@ function am4BuildAdvanceJob(job) {
     return Promise.resolve();
 }
 
-// A job is ready to act this tick: spend/transition states always; await states throttled to AM4_BUILD_POLL_MS.
+// A job is ready to act this tick: spend/transition states always; await states use lastPollAt
+// (NOT updatedAt — status notes must not push the next hangar check 5 minutes out).
 function am4BuildJobReady(job) {
     if (AM4_BUILD_ACTIVE.indexOf(job.state) === -1) return false;
-    if (job.state === 'await_delivery' || job.state === 'await_modify') return (Date.now() - (job.updatedAt || 0)) >= AM4_BUILD_POLL_MS;
+    if (job.state === 'await_delivery' || job.state === 'await_modify') {
+        return (Date.now() - (job.lastPollAt || 0)) >= AM4_BUILD_POLL_MS;
+    }
     return true;
 }
 
@@ -15708,6 +18873,7 @@ function am4BuildRunStep(job, errLabel) {
 // tail jobs frozen ~2 h while ~120 jobs ahead of them flowed). Tracking the queue index makes the
 // cursor march forward through ALL jobs and wrap cleanly to the front.
 var am4BuildLastId = null;
+var am4BuildAwaitPreferCounter = 0;
 function am4BuildTick(preferActionable) {
     am4BuildRenderQueue();
     if (typeof am4FleetWatchTick === 'function') am4FleetWatchTick();
@@ -15718,14 +18884,20 @@ function am4BuildTick(preferActionable) {
     if (typeof am4SuiteResearchBusy === 'function' && am4SuiteResearchBusy()) return;
     var ready = am4BuildQueue.filter(am4BuildJobReady);
     if (!ready.length) return;
-    // Fast-drain lane (preferActionable, from am4BuildRunStep's ~8 s reschedule) walks ACTIONABLE jobs
-    // first - they always make progress, so the cascade reaches the tail without dying on an await poll
-    // (v1.30 fix). The slow 2-min interval + visibility/focus catch-ups call this with NO flag → they
-    // round-robin ALL ready jobs, so the await_delivery / await_modify timers still get polled (~2 min).
+    // Fast-drain (preferActionable) = order/modify/route first. Slow ticks alternate so
+    // await_delivery / await_modify hangar checks are not starved behind a long spend backlog.
     var pool = ready;
     if (preferActionable) {
         var act = ready.filter(function (j) { return am4BuildActionableState(j.state); });
         if (act.length) pool = act;
+    } else {
+        am4BuildAwaitPreferCounter++;
+        if (am4BuildAwaitPreferCounter % 2 === 0) {
+            var awaiting = ready.filter(function (j) {
+                return j.state === 'await_delivery' || j.state === 'await_modify';
+            });
+            if (awaiting.length) pool = awaiting;
+        }
     }
     var lastIdx = -1;
     if (am4BuildLastId) {
@@ -15750,6 +18922,7 @@ function am4BuildForceStep(id) {
     if (!job || AM4_BUILD_ACTIVE.indexOf(job.state) === -1) return;
     if (job.state === 'await_delivery') am4BuildNote(job, 'checking hangar…');
     else if (job.state === 'await_modify') am4BuildNote(job, 'checking modify timer…');
+    if (job.state === 'await_delivery' || job.state === 'await_modify') job.lastPollAt = 0;
     if (!am4BuildRunStep(job,'manual')) {
         am4BuildForceQueued = id;
         am4BuildNote(job, 'waiting for current Auto-Build step to finish…');
@@ -15773,6 +18946,15 @@ function am4BuildStartScheduler() {
     // survive the wait. play() may need a user gesture; it retries when Auto-run is toggled.
     if (am4BuildAutoRun()) am4BuildKeepAlive(true);
     if (typeof am4FleetWatchStart === 'function') am4FleetWatchStart();
+    // Stop leftover delivery-watch modifies for jobs already cancelled before this reload.
+    try {
+        (am4BuildQueue || []).forEach(function (j) {
+            if (j && (j.state === 'cancelled' || j.state === 'error') &&
+                typeof am4FleetWatchDropForBuildJob === 'function') {
+                am4FleetWatchDropForBuildJob(j);
+            }
+        });
+    } catch (eDrop) { /* ignore */ }
 }
 
 // ---- Build Queue UI (control-bar button + panel) ----
@@ -15807,7 +18989,13 @@ function am4BuildBindQueueClicks(panel) {
             var rid = retryEl.getAttribute('data-build-retry');
             var rj = am4BuildQueue.filter(function (j) { return String(j.id) === String(rid); })[0];
             if (rj && rj.state === 'error') {
-                rj.planeId = null; rj.orderReg = null;
+                rj.planeId = null;
+                rj.modifySubmitted = false;
+                rj.modAttempts = 0;
+                // Keep orderReg when the plane may already be pending delivery (avoid duplicate RJOB-2 orders).
+                if (!/await|deliver|ordered|pending|hangar/i.test(String(rj.note || ''))) {
+                    rj.orderReg = null;
+                }
                 am4BuildSetState(rj, 'order', 're-queued (retry)');
             }
             return;
@@ -15817,7 +19005,7 @@ function am4BuildBindQueueClicks(panel) {
             ev.preventDefault();
             var cid = cancelEl.getAttribute('data-build-cancel');
             var cj = am4BuildQueue.filter(function (j) { return String(j.id) === String(cid); })[0];
-            if (cj) am4BuildSetState(cj, 'cancelled', 'cancelled by user');
+            if (cj) am4BuildCancelJob(cj);
         }
     });
 }
@@ -15882,7 +19070,7 @@ function am4BuildRenderQueue() {
             "' title='Re-queue this job from the order step' style='cursor:pointer; color:#38bdf8; font-weight:bold; margin-left:8px; white-space:nowrap; background:transparent; border:1px solid #38bdf8; border-radius:4px; padding:1px 8px; font-family:inherit; font-size:11px;'>↻ retry</button>" : "" ;
         return"<div style='border-bottom:1px solid #1e293b; padding:5px 0;'>" +
             "<div style='display:flex; align-items:center; gap:8px; flex-wrap:wrap;'>" +
-            "<b style='color:#cbd5e1;'>" + am4FleetEsc(j.destIcao) +"</b> <span style='color:#64748b;'>→ " + am4FleetEsc((j.hubName || '').split(',')[0]) +"</span>" +
+            "<b style='color:#cbd5e1;'>" + am4FleetEsc((j.hubName || '').split(',')[0] || '?') +"</b> <span style='color:#64748b;'>→ " + am4FleetEsc(j.destIcao) +"</span>" +
             "<span style='flex-grow:1;'></span><span style='font-weight:bold; color:" + col +";'>" + lbl +"</span>" +
             nowBtn + retryBtn +
             (canCancel ? "<button type='button' data-build-cancel='" + am4FleetEsc(j.id) +
@@ -15939,7 +19127,7 @@ window.AM4Build = {
 // invisible. We record which countries hit the cap so the UI can report a floor ("≥ N found")
 // instead of implying completeness.
 var AM4_RB_CACHE_KEY = 'am4RbRawCache';
-var AM4_RB_CACHE_V = 1;
+var AM4_RB_CACHE_V = 2;
 var AM4_RB_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 var AM4_RB_CACHE_MAX_ENTRIES = 20;
 var AM4_RB_SEARCH_ROW_CAP = 50; // the game's per-request row limit (measured)
@@ -15959,7 +19147,11 @@ function am4RbCacheLoad() {
     return { v: AM4_RB_CACHE_V, hubs: {} };
 }
 
-function am4RbCacheKey(hubId, distCap) { return String(hubId) + ':' + String(distCap); }
+function am4RbCacheKey(hubId, distCap) {
+    return String(hubId) + ':' + String(distCap) +
+        ':' + ((typeof am4CharterFlagValue === 'function') ? am4CharterFlagValue() : '0') +
+        ':' + ((typeof am4IsRealism === 'function' && am4IsRealism()) ? 'r' : 'e');
+}
 
 // Oldest-first eviction. Returns how many entries were dropped.
 function am4RbCacheEvict(cache, keepCount) {
@@ -16514,24 +19706,23 @@ function am4RbScanHubRaw(hubId, toN, opts, onProgress) {
     }
     var cfg = am4ExpLoadCfg();
     var minRwy = (am4AircraftProfile().minRwy > 0) ? am4AircraftProfile().minRwy : cfg.minRwy;
+    // Same turbo contract as Explorer: parallel countries + low throttle when Aggressive is on.
+    var timing = (typeof am4ExpEffectiveScanTiming === 'function')
+        ? am4ExpEffectiveScanTiming(cfg)
+        : { parallel: 1, throttleMs: Math.max(100, cfg.throttleMs || 350), aggressive: false };
+    var parallel = timing.parallel;
+    var throttleMs = timing.throttleMs;
     var runID = ++am4RbScanRunID;
     return am4ExpFetchMeta(false).then(function (meta) {
         var countries = (meta.countries && meta.countries.length) ? meta.countries : [];
         return new Promise(function (resolve) {
             var rows = [], capped = [], i = 0;
-            (function next() {
-                if (runID !== am4RbScanRunID) { resolve(null); return; } // cancelled
-                if (i >= countries.length) {
-                    am4RbCachePut(hubId, distCap, rows, capped);
-                    var stored = am4RbCacheGet(hubId, distCap, 0);
-                    resolve({ rows: stored ? stored.rows : rows, capped: capped, fromCache: false, at: Date.now(), distCap: distCap });
-                    return;
-                }
-                var country = countries[i];
+
+            function fetchCountry(country) {
                 var url = 'research_main.php?mode=search&rwy=' + minRwy + '&dist=' + distCap +
                           '&depId=' + encodeURIComponent(hubId) + '&arr=' + encodeURIComponent(country) +
-                          '&arrId=0&charter=0&_=' + Date.now();
-                fetch(url, { credentials: 'include'})
+                          '&arrId=0&' + am4CharterQs() + '&_=' + Date.now();
+                return fetch(url, { credentials: 'include' })
                     .then(function (r) { return r.text(); })
                     .then(function (h) {
                         var parsed = am4ExpParseRows(h);
@@ -16539,12 +19730,42 @@ function am4RbScanHubRaw(hubId, toN, opts, onProgress) {
                         if (parsed.length >= AM4_RB_SEARCH_ROW_CAP) capped.push(country);
                         rows = rows.concat(parsed);
                     })
-                    .catch(function () { /* skip this country, keep sweeping */ })
-                    .then(function () {
-                        i++;
-                        if (typeof onProgress === 'function') onProgress(i, countries.length, country);
-                        setTimeout(next, cfg.throttleMs);
+                    .catch(function () { /* skip this country, keep sweeping */ });
+            }
+
+            (function nextBatch() {
+                if (runID !== am4RbScanRunID) { resolve(null); return; } // cancelled
+                if (i >= countries.length) {
+                    am4RbCachePut(hubId, distCap, rows, capped);
+                    var stored = am4RbCacheGet(hubId, distCap, 0);
+                    resolve({
+                        rows: stored ? stored.rows : rows,
+                        capped: capped,
+                        fromCache: false,
+                        at: Date.now(),
+                        distCap: distCap,
+                        turbo: !!timing.aggressive,
+                        parallel: parallel
                     });
+                    return;
+                }
+                var batch = [];
+                while (batch.length < parallel && i < countries.length) {
+                    batch.push(countries[i]);
+                    i++;
+                }
+                Promise.all(batch.map(fetchCountry)).then(function () {
+                    var lastCountry = batch[batch.length - 1];
+                    if (typeof onProgress === 'function') {
+                        onProgress(i, countries.length, lastCountry, {
+                            parallel: parallel,
+                            aggressive: !!timing.aggressive,
+                            throttleMs: throttleMs
+                        });
+                    }
+                    if (i >= countries.length) nextBatch();
+                    else setTimeout(nextBatch, throttleMs);
+                });
             })();
         });
     });
@@ -16572,9 +19793,8 @@ function am4RbScoreDests(rows, hubId, toN, flownMap) {
     return scored;
 }
 
-// Seats for the NEW route: caps = demand ÷ TO per class (each of the N daily flights serves its
-// share), economy-first cascade into the 600 slots (weights Y1/J2/F3), every class >= 1 because
-// route creation silently no-ops unless e>0 && b>0 && f>0.
+// Seats for the NEW route: caps = demand ÷ TO per class, then pack into capacity.
+// Scheduled needs Y+J+F > 0; charter needs Y+J > 0 (F stays 0).
 function am4RbTargetSeats(demand, toN) {
     var n = toN || 3;
     var caps = {
@@ -16582,10 +19802,15 @@ function am4RbTargetSeats(demand, toN) {
         j: Math.floor((demand.j || 0) / n),
         f: Math.floor((demand.f || 0) / n)
     };
+    if (typeof am4IsCharter === 'function' && am4IsCharter()) caps.f = 0;
     var cap = am4AircraftSeats();
     var expCfg = (typeof am4ExpLoadCfg === 'function') ? am4ExpLoadCfg() : {};
-    var topOrder = (expCfg.seatStrategy === 'economy-first') ? ['y', 'j', 'f'] : ['f', 'j', 'y'];
+    var topOrder = (typeof am4PaxFillTopOrder === 'function')
+        ? am4PaxFillTopOrder(expCfg)
+        : ((expCfg.seatStrategy === 'economy-first') ? ['y', 'j', 'f'] : ['f', 'j', 'y']);
     var norm = am4PaxSeatEnsureRoutable(caps.y, caps.j, caps.f, cap, topOrder);
+    norm = am4PaxSeatBoostThinClasses(norm, cap, topOrder);
+    if (typeof am4IsCharter === 'function' && am4IsCharter()) norm.f = 0;
     return { y: norm.y, j: norm.j, f: norm.f };
 }
 
@@ -16618,35 +19843,41 @@ function am4RbReservedDests(hubId, hubIcao) {
 function am4RbPair(planes, dests, hubId, hubIcao, toN) {
     var reserved = am4RbReservedDests(hubId, hubIcao);
     var pool = dests.filter(function (d) { return !reserved[String(d.arrId)]; });
-    var unbuilt = pool.filter(function (d) { return !d.built; });
-    var built = pool.filter(function (d) { return !!d.built; });
+    function seatsFor(d) {
+        return am4RbTargetSeats(d.demand || { y: 0, j: 0, f: 0 }, toN);
+    }
+    function isBalanced(d) {
+        if (d.cargo) return true;
+        // Prefer Explorer's packed cfg when present; else recompute from demand.
+        var s = d.cfg || seatsFor(d);
+        var planeCap = (typeof am4AircraftSeats === 'function') ? (am4AircraftSeats() || 0) : 0;
+        return !am4PaxSeatIsThinMix(s, planeCap);
+    }
+    var unbuiltBal = pool.filter(function (d) { return !d.built && isBalanced(d); });
+    var unbuiltThin = pool.filter(function (d) { return !d.built && !isBalanced(d); });
+    var builtBal = pool.filter(function (d) { return !!d.built && isBalanced(d); });
+    var builtThin = pool.filter(function (d) { return !!d.built && !isBalanced(d); });
+    // Prefer proper seat mixes; only fall back to Y1/J1/F1 destinations when nothing else is left.
+    var tiers = [unbuiltBal, builtBal, unbuiltThin, builtThin];
     var pairs = [], unpaired = [];
-    var ui = 0, bi = 0;
+    var cursors = [0, 0, 0, 0];
 
     function pickForPlane(plane) {
         var cur = plane.curDestId ? String(plane.curDestId) : '';
-        var i, d;
-        for (i = ui; i < unbuilt.length; i++) {
-            d = unbuilt[i];
-            if (String(d.arrId) === cur) continue;
-            ui = i + 1;
-            return d;
-        }
-        for (i = 0; i < unbuilt.length; i++) {
-            d = unbuilt[i];
-            if (String(d.arrId) === cur) continue;
-            return d;
-        }
-        for (i = bi; i < built.length; i++) {
-            d = built[i];
-            if (String(d.arrId) === cur) continue;
-            bi = i + 1;
-            return d;
-        }
-        for (i = 0; i < built.length; i++) {
-            d = built[i];
-            if (String(d.arrId) === cur) continue;
-            return d;
+        var t, i, d;
+        for (t = 0; t < tiers.length; t++) {
+            var list = tiers[t];
+            for (i = cursors[t]; i < list.length; i++) {
+                d = list[i];
+                if (String(d.arrId) === cur) continue;
+                cursors[t] = i + 1;
+                return d;
+            }
+            for (i = 0; i < list.length; i++) {
+                d = list[i];
+                if (String(d.arrId) === cur) continue;
+                return d;
+            }
         }
         return null;
     }
@@ -16664,7 +19895,7 @@ function am4RbPair(planes, dests, hubId, hubIcao, toN) {
         var icao = air ? (air.icao || air.iata || String(chosen.arrId)) : String(chosen.arrId);
         pairs.push({
             plane: p, dest: chosen, destIcao: icao,
-            seats: am4RbTargetSeats(chosen.demand || { y: 0, j: 0, f: 0 }, toN),
+            seats: seatsFor(chosen),
             fromStrategy: p.strategy, toStrategy: toN
         });
     });
@@ -17156,7 +20387,9 @@ function am4RbAdvance(job) {
             }
             return am4FleetFetchRouteConfig(job.aircraftId, job.newDestId).then(function (rc) {
                 var expCfg = (typeof am4ExpLoadCfg === 'function') ? am4ExpLoadCfg() : {};
-                var topOrder = (expCfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ];
+                var topOrder = (typeof am4PaxFillTopOrder === 'function')
+                    ? am4PaxFillTopOrder(expCfg)
+                    : ((expCfg.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ]);
                 var seats = (rc && rc.demand) ? am4RbTargetSeats(rc.demand, job.toStrategy)
                                               : (job.seats || { y: info.curE, j: info.curB, f: info.curF });
                 seats = am4PaxSeatEnsureRoutable(seats.y, seats.j, seats.f, am4AircraftSeats(), topOrder);
@@ -17252,15 +20485,20 @@ function am4RbAdvance(job) {
                 return;
             }
             var seats = { y: row.y, j: row.j, f: row.f };
-            if (seats.y <= 0 || seats.j <= 0 || seats.f <= 0) {
+            if (typeof am4PaxIsRoutable === 'function' ? !am4PaxIsRoutable(seats.y, seats.j, seats.f)
+                : (seats.y <= 0 || seats.j <= 0 || seats.f <= 0)) {
                 var expCfgR = (typeof am4ExpLoadCfg === 'function') ? am4ExpLoadCfg() : {};
-                var topOrderR = (expCfgR.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ];
+                var topOrderR = (typeof am4PaxFillTopOrder === 'function')
+                    ? am4PaxFillTopOrder(expCfgR)
+                    : ((expCfgR.seatStrategy === 'economy-first') ? ['y','j','f' ] : ['f','j','y' ]);
                 var fixed = am4PaxSeatEnsureRoutable(seats.y, seats.j, seats.f, am4AircraftSeats(), topOrderR);
                 job.seats = fixed;
                 am4RbSetState(job,'configuring',
-                    'seat config had a 0 class (Y' + seats.y + '/J' + seats.j + '/F' + seats.f +
+                    'seat config was not routable (Y' + seats.y + '/J' + seats.j + '/F' + seats.f +
                     ') — reconfiguring to Y' + fixed.y + '/J' + fixed.j + '/F' + fixed.f,
-                    'the game requires all three classes > 0 before a route can be created');
+                    am4IsCharter()
+                        ? 'charter needs Economy + Business > 0 before a route can be created'
+                        : 'the game requires all three classes > 0 before a route can be created');
                 return;
             }
             var gate = am4BuildCanSpend(1500000);
@@ -17865,6 +21103,7 @@ function am4RbBuildPanel() {
         "<div id='am4RbHubList' style='max-height:150px; overflow-y:auto; border:1px solid #1e293b; border-radius:4px; padding:4px;'>loading…</div>" +
 
         "<div class='am4-exp-sec' style='border-top:1px dashed #334155; margin-top:9px; padding-top:7px; font-weight:bold; color:#38bdf8; font-size:11px;'>③ ANALYSE</div>" +
+        "<div id='am4RbTurboHint' style='font-size:9px; color:#64748b; margin:4px 0 2px 0; line-height:1.4;'></div>" +
         "<div style='display:flex; gap:8px; margin-top:6px; align-items:center;'>" +
         "<button id='am4RbAnalyse' style='cursor:pointer; border:none; border-radius:5px; padding:6px 12px; font-family:monospace; font-size:12px; font-weight:bold; background:#4c1d95; color:#ede9fe;'>Analyse selection</button>" +
         "<button id='am4RbCancelScan' style='display:none; cursor:pointer; border:none; border-radius:5px; padding:6px 10px; font-family:monospace; font-size:11px; background:#334155; color:#cbd5e1;'>Cancel</button>" +
@@ -17963,6 +21202,7 @@ function am4RbBuildPanel() {
     document.getElementById('am4RbFleetRefresh').addEventListener('click', am4RbOnFleetRefresh);
 
     if (typeof am4PanelChrome === 'function') am4PanelChrome(panel,'rebuild');
+    am4RbUpdateTurboHint();
     am4RbRefreshStrategyInfo();
     return panel;
 }
@@ -17970,6 +21210,21 @@ function am4RbBuildPanel() {
 function am4RbAnalyseMsg(m, c) {
     var el = document.getElementById('am4RbAnalyseMsg');
     if (el) { el.innerText = m; el.style.color = c || '#a78bfa'; }
+}
+
+function am4RbUpdateTurboHint() {
+    var el = document.getElementById('am4RbTurboHint');
+    if (!el) return;
+    var timing = (typeof am4ExpEffectiveScanTiming === 'function')
+        ? am4ExpEffectiveScanTiming(am4ExpLoadCfg())
+        : { parallel: 1, throttleMs: 350, aggressive: false };
+    if (timing.aggressive) {
+        el.innerHTML = '<span style="color:#38bdf8;">TURBO ON</span> — ' + timing.parallel +
+            ' countries/batch · ' + timing.throttleMs + ' ms throttle (same as 🔎 Explorer).';
+    } else {
+        el.innerHTML = 'Scan pace: 1 country at a time · ' + timing.throttleMs +
+            ' ms. Turn on <b style="color:#38bdf8;">Aggressive / turbo</b> in 🔎 Explorer to speed Analyse.';
+    }
 }
 
 function am4RbFillNSelects() {
@@ -18255,14 +21510,20 @@ function am4RbOnAnalyse() {
         }
         var flownMap = am4ExpBuildFlownMap();
         var results = [], idx = 0;
+        var timing = (typeof am4ExpEffectiveScanTiming === 'function')
+            ? am4ExpEffectiveScanTiming(am4ExpLoadCfg())
+            : { parallel: 1, throttleMs: 350, aggressive: false };
+        am4RbUpdateTurboHint();
+        var turboTag = timing.aggressive ? (' · TURBO×' + timing.parallel) : '';
         var next = function () {
             if (!am4RbSel.scanning) return Promise.resolve();
             if (idx >= hubs.length) return Promise.resolve();
             var h = hubs[idx];
-            am4RbAnalyseMsg('hub ' + (idx + 1) + '/' + hubs.length + ' — ' + h.hubIcao + '…');
-            return am4RbScanHubRaw(h.hubId, toN, { force: !!am4RbSel.forceHubs[h.hubId] }, function (i, n, country) {
+            am4RbAnalyseMsg('hub ' + (idx + 1) + '/' + hubs.length + ' — ' + h.hubIcao + '…' + turboTag);
+            return am4RbScanHubRaw(h.hubId, toN, { force: !!am4RbSel.forceHubs[h.hubId] }, function (i, n, country, info) {
+                var tag = (info && info.aggressive) ? (' · TURBO×' + (info.parallel || timing.parallel)) : turboTag;
                 am4RbAnalyseMsg('hub ' + (idx + 1) + '/' + hubs.length + ' — ' + h.hubIcao +
-                    ': country ' + i + '/' + n + ' (' + country + ')');
+                    ': country ' + i + '/' + n + ' (' + country + ')' + tag);
             }).then(function (res) {
                 if (!res) return;
                 var scored = am4RbScoreDests(res.rows, h.hubId, toN, flownMap);
@@ -19016,14 +22277,41 @@ function am4OpsStaffTick(force) {
                 var m = am4OpsStaffReadMorale(r);
                 return r.label + (m != null ? (' ' + m + '%') : '');
             }).join(', ');
+            var need = [];
+            var already = [];
+            var ri0;
+            for (ri0 = 0; ri0 < roles.length; ri0++) {
+                var m0 = am4OpsStaffReadMorale(roles[ri0]);
+                if (m0 != null && m0 >= 100) already.push(roles[ri0].label + ' ' + m0 + '%');
+                else need.push(roles[ri0]);
+            }
+            if (!need.length) {
+                if (typeof am4LogAction === 'function') {
+                    am4LogAction('ops', '👥 Staff morale: all roles at 100% — no salary dance (' + snapshot + ')');
+                }
+                return;
+            }
             if (typeof am4LogAction === 'function') {
-                am4LogAction('ops', '👥 Staff morale: dancing ' + snapshot);
+                am4LogAction('ops', '👥 Staff morale: dancing ' +
+                    need.map(function (r) {
+                        var m = am4OpsStaffReadMorale(r);
+                        return r.label + (m != null ? (' ' + m + '%') : '');
+                    }).join(', ') +
+                    (already.length ? (' · skipping ' + already.join(', ')) : ''));
             }
             var chain = Promise.resolve();
             var ri;
-            for (ri = 0; ri < roles.length; ri++) {
+            for (ri = 0; ri < need.length; ri++) {
                 (function (role) {
                     chain = chain.then(function () {
+                        // Re-check right before dancing in case the UI updated mid-run.
+                        var nowM = am4OpsStaffReadMorale(role);
+                        if (nowM != null && nowM >= 100) {
+                            if (typeof am4LogAction === 'function') {
+                                am4LogAction('ops', '👥 ' + role.label + ' already ' + nowM + '% — skipped');
+                            }
+                            return am4OpsStaffSleep(200);
+                        }
                         return am4OpsStaffRunMinSalaryDanceUi(role).then(function (res) {
                             if (!res || !res.ok) {
                                 if (typeof am4LogAction === 'function') {
@@ -19047,7 +22335,7 @@ function am4OpsStaffTick(force) {
                             return am4OpsStaffSleep(500 + Math.floor(Math.random() * 400));
                         });
                     });
-                })(roles[ri]);
+                })(need[ri]);
             }
             return chain;
         })
@@ -19745,8 +23033,9 @@ function am4OpsFetchRouteTicketState(fleetId) {
             }
             var hasPriceL = !!box.querySelector('#price_l, #lTicket');
             var hasF = !!box.querySelector('#fTicket, #fSeat, #price_f');
+            var charterMode = (typeof am4IsCharter === 'function' && am4IsCharter());
             var looksCargo = hasPriceL || /Large\s*load|Heavy\s*load|#price_l|freighter/i.test(h || '') ||
-                (!hasF && nums && (nums.length === 2 || nums.length >= 4));
+                (!charterMode && !hasF && nums && (nums.length === 2 || nums.length >= 4));
 
             if (looksCargo) {
                 var curL = vFloat('#price_l, #lTicket') || vFloat('#eTicket, #eSeat');
@@ -19767,18 +23056,26 @@ function am4OpsFetchRouteTicketState(fleetId) {
             var auto = null;
             if (nums && nums.length >= 3) {
                 auto = { y: Math.round(nums[0]), j: Math.round(nums[1]), f: Math.round(nums[2]) };
+            } else if (charterMode && nums && nums.length >= 2) {
+                auto = { y: Math.round(nums[0]), j: Math.round(nums[1]), f: 0 };
             } else {
                 var m = (h || '').match(/ticketPriceSuggest\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i) ||
                     (h || '').match(/autoPrice\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
                 if (m) auto = { y: +m[1], j: +m[2], f: +m[3] };
+                else if (charterMode) {
+                    var m2 = (h || '').match(/ticketPriceSuggest\s*\(\s*(\d+)\s*,\s*(\d+)/i) ||
+                        (h || '').match(/autoPrice\s*\(\s*(\d+)\s*,\s*(\d+)/i);
+                    if (m2) auto = { y: +m2[1], j: +m2[2], f: 0 };
+                }
             }
             return {
                 fleetId: String(fleetId),
                 routeId: rid,
                 cargo: false,
+                charter: !!charterMode,
                 cur: cur,
                 auto: auto,
-                readable: !!(rid && auto && auto.y > 0 && auto.j > 0 && auto.f > 0)
+                readable: !!(rid && auto && auto.y > 0 && auto.j > 0 && (charterMode || auto.f > 0))
             };
         });
 }
@@ -19792,10 +23089,11 @@ function am4OpsTicketTargetFromAuto(auto, cargo) {
             h: trunc(Number(auto.h) * Number(AM4_CONFIG.cargoMultiHeavy))
         };
     }
+    var needsFirst = (typeof am4PaxNeedsFirst === 'function') ? am4PaxNeedsFirst() : true;
     return {
         y: Math.max(1, Math.floor(Number(auto.y) * Number(AM4_CONFIG.paxMultiEco))),
         j: Math.max(1, Math.floor(Number(auto.j) * Number(AM4_CONFIG.paxMultiBiz))),
-        f: Math.max(1, Math.floor(Number(auto.f) * Number(AM4_CONFIG.paxMultiFirst)))
+        f: needsFirst ? Math.max(1, Math.floor(Number(auto.f) * Number(AM4_CONFIG.paxMultiFirst))) : 0
     };
 }
 
@@ -19807,7 +23105,11 @@ function am4OpsTicketsNeedFix(cur, want, cargo) {
         return Math.abs(Number(cur.l) - Number(want.l)) > 0.009 ||
             Math.abs(Number(cur.h) - Number(want.h)) > 0.009;
     }
-    if (!cur || cur.y == null || cur.j == null || cur.f == null) return true;
+    if (!cur || cur.y == null || cur.j == null) return true;
+    if ((typeof am4IsCharter === 'function' && am4IsCharter()) || want.f === 0) {
+        return cur.y !== want.y || cur.j !== want.j;
+    }
+    if (cur.f == null) return true;
     return cur.y !== want.y || cur.j !== want.j || cur.f !== want.f;
 }
 
@@ -19823,8 +23125,9 @@ function am4OpsTicketsDirection(cur, want, cargo) {
         return 'set';
     }
     if (!cur || cur.y == null) return 'set';
-    var u = cur.y < want.y || cur.j < want.j || cur.f < want.f;
-    var o = cur.y > want.y || cur.j > want.j || cur.f > want.f;
+    var charterCmp = (typeof am4IsCharter === 'function' && am4IsCharter()) || want.f === 0;
+    var u = cur.y < want.y || cur.j < want.j || (!charterCmp && cur.f < want.f);
+    var o = cur.y > want.y || cur.j > want.j || (!charterCmp && cur.f > want.f);
     if (u && o) return 'mixed';
     if (o) return 'lowered';
     if (u) return 'raised';
@@ -19849,6 +23152,9 @@ function am4OpsTicketWriteOk(after, want, cargo) {
     if (cargo) {
         return Math.abs(Number(after.cur.l) - Number(want.l)) <= 0.02 &&
             Math.abs(Number(after.cur.h) - Number(want.h)) <= 0.02;
+    }
+    if ((typeof am4IsCharter === 'function' && am4IsCharter()) || want.f === 0) {
+        return after.cur.y === want.y && after.cur.j === want.j;
     }
     return after.cur.y === want.y && after.cur.j === want.j && after.cur.f === want.f;
 }
