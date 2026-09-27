@@ -74,7 +74,7 @@ Click File → Save (or Ctrl+S / Cmd+S).
 Option B — Import from URL
 Copy this raw URL:
 
-https://raw.githubusercontent.com/Hossdaboss405/Airline-Manager-4-autobot-Master-Suite/refs/heads/main/AM4%20PERFECT%20MASTER%20SUITE%20FOR%20TAMPERMONKEY.js
+[https://raw.githubusercontent.com/Hossdaboss405/Airline-Manager-4-autobot-Master-Suite/refs/heads/main/AM4%20PERFECT%20MASTER%20SUITE.js]
 
 Click the Tampermonkey icon → Dashboard.
 
