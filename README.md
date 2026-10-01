@@ -34,7 +34,6 @@ This bot is currently DONE with development and its functionality is PERFECT. It
 - [x] Auto hub catering purchase when missing (duration/amount configurable)
 - [x] Seat rebalance for at-base planes (no reroute)
 - [x] Explorer hub capacity planner (suggest buys from remaining ★ routes)
-- [x] Alliance high-cash remind and optional auto-donate
 - [x] Delivery watch: after delivery mods, auto-route from Explorer remaining
 - [x] Route health check (band/stack report in the log)
 - [x] Quiet hours (idle overnight)
