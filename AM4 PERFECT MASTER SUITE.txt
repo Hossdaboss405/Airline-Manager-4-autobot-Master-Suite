@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name AM4 MASTER SUITE MADE BY HOSS
 // @namespace http://tampermonkey.net/
-// @version 2.108
+// @version 2.114
 // @description AM4 automation suite (PC edition): Prep & create route (modify→wait→route)
 // @author HOSS
 // @match *://airlinemanager.com/*
@@ -24,7 +24,7 @@
 (function() {
 'use strict';
 
-var AM4_SUITE_VERSION = '2.108';
+var AM4_SUITE_VERSION = '2.114';
 var AM4_SUITE_EDITION = 'pc';
 
 if (typeof window !== 'undefined') {
@@ -115,6 +115,8 @@ var AM4_DEFAULT_CONFIG = {
     paxMultiFirst: 1.06,
     cargoMultiLarge: 1.10,
     cargoMultiHeavy: 1.08,
+    charterMultiEco: 1.10,
+    charterMultiBiz: 1.08,
     departIntervalMin: 15,
     buyerIntervalMin: 15,
     maintIntervalHrs: 8,
@@ -271,6 +273,8 @@ var AM4_NUM_BOUNDS = {
     paxMultiFirst: [0.5, 5],
     cargoMultiLarge: [0.5, 5],
     cargoMultiHeavy: [0.5, 5],
+    charterMultiEco: [0.5, 5],
+    charterMultiBiz: [0.5, 5],
     departIntervalMin: [1, 1440],
     buyerIntervalMin: [1, 1440],
     maintIntervalHrs: [0.1, 168],
@@ -459,6 +463,19 @@ function loadAm4Config() {
     else merged.aircraftService = 'charter';
     if (String(merged.allianceReportMode || '').toLowerCase() !== 'live') merged.allianceReportMode = 'period';
     else merged.allianceReportMode = 'live';
+    // Pax Y/J/F ×1.1/1.08/1.06 floored. Cargo L/H ×1.1/1.08 to the cent.
+    // Charter Y/J ×1.1/1.08 floored. Applied once so an older saved 1× does not stick.
+    if (stored.priceScaleVersion !== 1) {
+        merged.paxMultiEco = 1.1;
+        merged.paxMultiBiz = 1.08;
+        merged.paxMultiFirst = 1.06;
+        merged.cargoMultiLarge = 1.1;
+        merged.cargoMultiHeavy = 1.08;
+        merged.charterMultiEco = 1.1;
+        merged.charterMultiBiz = 1.08;
+        merged.priceScaleVersion = 1;
+        try { localStorage.setItem(AM4_CONFIG_KEY, JSON.stringify(merged)); } catch (eScale) { /* ignore */ }
+    }
     return merged;
 }
 
@@ -2108,11 +2125,13 @@ var AM4_SETTINGS_SCHEMA = [
     { key:"checkHours" , label:"A-Check below (hours)" , type:"int" , min: 1 },
     { key:"maintIntervalHrs" , label:"Re-run every (hrs)" , type:"float" , min: 0.1 },
     { section:"TICKET PRICE MULTIPLIERS" },
-    { key:"paxMultiEco" , label:"Economy ×" , type:"float" , min: 0.5, step: 0.01 },
-    { key:"paxMultiBiz" , label:"Business ×" , type:"float" , min: 0.5, step: 0.01 },
-    { key:"paxMultiFirst" , label:"First ×" , type:"float" , min: 0.5, step: 0.01 },
-    { key:"cargoMultiLarge" , label:"Cargo Large ×" , type:"float" , min: 0.5, step: 0.01 },
-    { key:"cargoMultiHeavy" , label:"Cargo Heavy ×" , type:"float" , min: 0.5, step: 0.01 },
+    { key:"paxMultiEco" , label:"Pax Economy × (round down)" , type:"float" , min: 0.5, step: 0.01 },
+    { key:"paxMultiBiz" , label:"Pax Business × (round down)" , type:"float" , min: 0.5, step: 0.01 },
+    { key:"paxMultiFirst" , label:"Pax First × (round down)" , type:"float" , min: 0.5, step: 0.01 },
+    { key:"cargoMultiLarge" , label:"Cargo Large × (2 decimals)" , type:"float" , min: 0.5, step: 0.01 },
+    { key:"cargoMultiHeavy" , label:"Cargo Heavy × (2 decimals)" , type:"float" , min: 0.5, step: 0.01 },
+    { key:"charterMultiEco" , label:"Charter Economy × (round down)" , type:"float" , min: 0.5, step: 0.01 },
+    { key:"charterMultiBiz" , label:"Charter Business × (round down)" , type:"float" , min: 0.5, step: 0.01 },
     { section:"DEPART" },
     { key:"departIntervalMin" , label:"Auto-Depart every (min)" , type:"float" , min: 1 },
     { key:"departMaxBatches" , label:"Max depart clicks per run" , type:"int" , min: 1 },
@@ -4276,8 +4295,10 @@ function am4ApplyPriceMultipliers(scope, source) {
         var cJ = parseFloat(biz.value) || 0;
         if (cY <= 0 || cJ <= 0) return false;
         if (am4AlreadyPriced(eco) || am4AlreadyPriced(biz)) return false;
-        var outY = Math.floor(cY * AM4_CONFIG.paxMultiEco);
-        var outJ = Math.floor(cJ * AM4_CONFIG.paxMultiBiz);
+        var yMul = Number(AM4_CONFIG.charterMultiEco) || 1.1;
+        var jMul = Number(AM4_CONFIG.charterMultiBiz) || 1.08;
+        var outY = Math.floor(cY * yMul);
+        var outJ = Math.floor(cJ * jMul);
         am4WritePriceField(eco, outY, false);
         am4WritePriceField(biz, outJ, false);
         if (first) am4WritePriceField(first, 0, false);
@@ -4296,9 +4317,12 @@ function am4ApplyPriceMultipliers(scope, source) {
     // fields whenever the game re-rendered or the user hand-edited just one of them.
     if (am4AlreadyPriced(eco) || am4AlreadyPriced(biz) || am4AlreadyPriced(first)) return false;
 
-    var calcY = Math.floor(baseY * AM4_CONFIG.paxMultiEco);
-    var calcJ = Math.floor(baseJ * AM4_CONFIG.paxMultiBiz);
-    var calcF = Math.floor(baseF * AM4_CONFIG.paxMultiFirst);
+    var yMul = Number(AM4_CONFIG.paxMultiEco) || 1.1;
+    var jMul = Number(AM4_CONFIG.paxMultiBiz) || 1.08;
+    var fMul = Number(AM4_CONFIG.paxMultiFirst) || 1.06;
+    var calcY = Math.floor(baseY * yMul);
+    var calcJ = Math.floor(baseJ * jMul);
+    var calcF = Math.floor(baseF * fMul);
     am4WritePriceField(eco, calcY, false);
     am4WritePriceField(biz, calcJ, false);
     am4WritePriceField(first, calcF, false);
@@ -12247,11 +12271,13 @@ function am4FleetPricePlan(rc, cargo) {
     if (!(y > 0 && j > 0)) return null;
     var needsFirst = (typeof am4PaxNeedsFirst === 'function') ? am4PaxNeedsFirst() : true;
     if (needsFirst && !(f > 0)) return null;
+    var yMul = needsFirst ? (Number(AM4_CONFIG.paxMultiEco) || 1.1) : (Number(AM4_CONFIG.charterMultiEco) || 1.1);
+    var jMul = needsFirst ? (Number(AM4_CONFIG.paxMultiBiz) || 1.08) : (Number(AM4_CONFIG.charterMultiBiz) || 1.08);
     return {
         type: 'pax',
-        y: Math.floor(y * Number(AM4_CONFIG.paxMultiEco)),
-        j: Math.floor(j * Number(AM4_CONFIG.paxMultiBiz)),
-        f: needsFirst ? Math.floor(f * Number(AM4_CONFIG.paxMultiFirst)) : 0,
+        y: Math.floor(y * yMul),
+        j: Math.floor(j * jMul),
+        f: needsFirst ? Math.floor(f * (Number(AM4_CONFIG.paxMultiFirst) || 1.06)) : 0,
         source: n.source
     };
 }
@@ -19286,11 +19312,18 @@ function am4RbFetchAircraftPage(aircraftId) {
             var lm = (html || '').match(/>\s*([A-Za-z]+)\s+in\s*<span[^>]*id=['"]timer['"]/i);
             var secs = tm ? Number(tm[1]) : 0;
             var label = lm ? String(lm[1]).toLowerCase() : '';
+            // Current-leg endpoints (departure, then arrival). Not hub-then-dest.
+            var ends = [];
+            box.querySelectorAll('.col-5.bg-light span.l-text.exo').forEach(function (el) {
+                var t = (el.textContent || '').trim().toUpperCase();
+                if (/^[A-Z0-9]{3,4}$/.test(t)) ends.push(t);
+            });
             return {
                 routeId: gm ? gm[1] : null,
                 timerSecs: (isFinite(secs) && secs > 0) ? secs : 0,
                 timerLabel: label,
                 inFlight: (label === 'arrives' && secs > 0),
+                ends: ends.length === 2 ? ends : null,
                 plannedMaintenance: /Planned maintenance/i.test(text),
                 utcTimes: (text.match(/\d{2}:\d{2}:\d{2} UTC/g) || []).slice(0, 2)
             };
@@ -19356,6 +19389,29 @@ function am4RbStrategyForDist(dist) {
 }
 function am4RbInBand(dist, band) { return dist > band.lo && dist <= band.hi; }
 
+// Panel range is the aircraft's range RIGHT NOW. Rebuild always installs Fuel −10%
+// before creating the route, and that raises range about 10%. A pre-flight check that
+// treats today's range as final kills Strategy-band routes the fuel mod will cover.
+// allowFuelHeadroom: true only before mods are applied.
+function am4RbRangeBlock(distKm, rangeKm, allowFuelHeadroom) {
+    var dist = Number(distKm) || 0;
+    var range = Number(rangeKm) || 0;
+    if (!(dist > 0 && range > 500)) return '';
+    var ceiling = range;
+    if (allowFuelHeadroom) {
+        ceiling = Math.round(range * 1.1);
+        var prof = 0;
+        try { prof = (typeof am4StratRangeKm === 'function') ? (Number(am4StratRangeKm()) || 0) : 0; } catch (eR) { prof = 0; }
+        if (prof > ceiling) ceiling = prof;
+    }
+    if (dist <= ceiling) return '';
+    var msg = Number(dist).toLocaleString() + ' km is past range ' + Number(range).toLocaleString() + ' km';
+    if (allowFuelHeadroom && ceiling > range) {
+        msg += ' (~' + Number(ceiling).toLocaleString() + ' km after Fuel −10%)';
+    }
+    return msg;
+}
+
 // Great-circle km between two airport ids, straight from the live airport table. Zero
 // requests, and independent of any panel - which matters because the game's route panel
 // measures from where the AIRCRAFT currently is, not from its hub (see the note in ①).
@@ -19375,7 +19431,70 @@ function am4RbHubDistance(fromId, toId) {
     return Math.round(2 * R * Math.asin(Math.sqrt(h)));
 }
 
-// Classify every routed A380 by the strategy its CURRENT route distance implies.
+// The map icon is NOT the model. IL-96, MC-21-400 and the A380-800 can share one icon,
+// and a missing icon id used to let every routed plane into the selected type's plan.
+// fleet.php?type=<id> is the game's own list for that model.
+var am4RbTypeRosterCache = { at: 0, typeId: 0, byId: null };
+function am4RbSelectedTypeRoster(force) {
+    var tid = am4AircraftTypeId();
+    if (!force && am4RbTypeRosterCache.byId && am4RbTypeRosterCache.typeId === tid &&
+        (Date.now() - am4RbTypeRosterCache.at) < 60000) {
+        return Promise.resolve(am4RbTypeRosterCache.byId);
+    }
+    return am4RbListAtBaseOrRouted().then(function (rows) {
+        var byId = {};
+        (rows || []).forEach(function (p) {
+            if (p && p.planeId) byId[String(p.planeId)] = p;
+        });
+        am4RbTypeRosterCache = { at: Date.now(), typeId: tid, byId: byId };
+        return byId;
+    });
+}
+
+// True when this job was stopped because the plane is a different model. Does not
+// count toward the circuit breaker — a mixed fleet is not a broken game.
+function am4RbRejectIfWrongType(job) {
+    return am4RbSelectedTypeRoster(false).then(function (byId) {
+        if (!Object.keys(byId || {}).length) {
+            am4RbTransient(job, 'could not read the ' + am4AircraftName() + ' fleet list');
+            return true;
+        }
+        var row = byId[String(job.aircraftId)];
+        if (row) {
+            job.typeId = am4AircraftTypeId();
+            if (row.model) job.model = row.model;
+            return false;
+        }
+        var stop = function (model) {
+            var msg = job.reg + ' is a ' + model + ', not a ' + am4AircraftName() +
+                '. Rebuild only runs on the aircraft type selected in the suite.';
+            am4RbRecordError(job, 'wrong_type', msg);
+            if (job.grounded) {
+                am4RbSetState(job, 'rolling_back', msg,
+                    'un-grounding it so it resumes its old route and keeps earning');
+            } else {
+                am4RbSetState(job, 'needs_attention', msg, 'Skip — this is not a ' + am4AircraftName());
+            }
+            return true;
+        };
+        if (typeof am4FleetListAllRows !== 'function') return stop('different model');
+        return am4FleetListAllRows(false).then(function (rows) {
+            var id = String(job.aircraftId);
+            var found = null;
+            (rows || []).some(function (p) {
+                if (p && String(p.planeId) === id) { found = p; return true; }
+                return false;
+            });
+            return stop((found && found.model) ? found.model : 'different model');
+        }).catch(function () { return stop('different model'); });
+    }).catch(function (e) {
+        am4RbTransient(job, 'could not confirm the aircraft type: ' + e);
+        return true;
+    });
+}
+
+// Classify every routed plane of the SELECTED model by the strategy its current
+// distance implies. Membership comes from fleet.php?type=, never from the map icon.
 // Reuses the same verified resolution the 2×-fleet list was built on: routeMarkers polyline
 // endpoints -> airportIconData by coordinate -> the owned-hub side is the hub, the other is the
 // destination -> haversine distance.
@@ -19384,6 +19503,7 @@ function am4RbHubDistance(fromId, toId) {
 var am4RbFleetCache = null;
 function am4RbClassifyFleet(force) {
     if (am4RbFleetCache && !force) return Promise.resolve(am4RbFleetCache);
+    return am4RbSelectedTypeRoster(!!force).then(function (owned) {
     return am4ExpFetchMeta(false).then(function (meta) {
         var hubIds = {};
         (meta.hubs || []).forEach(function (h) { hubIds[String(h.id)] = h.name; });
@@ -19421,11 +19541,16 @@ function am4RbClassifyFleet(force) {
             if (A && B) r2p[String(rid)] = { A: A, B: B, dist: Math.round(hav(+A.lat, +A.lon, +B.lat, +B.lon)) };
         });
         var planes = [], unresolved = 0, uncertain = 0;
+        if (!Object.keys(owned || {}).length) {
+            console.log('[AM4 Bot Log] Rebuild: ' + am4AircraftName() + ' fleet page returned no aircraft, so nothing was classified.');
+            am4RbFleetCache = { planes: [], hubIds: hubIds, unresolved: 0, uncertain: 0, at: Date.now() };
+            return am4RbFleetCache;
+        }
         Object.keys(sd).forEach(function (k) {
             var p = sd[k];
             if (!p || !p.routeId || p.routeId === 0) return;
-            var wantIcon = am4AircraftIconId();
-            if (wantIcon && p.icon && p.icon !== wantIcon) return;
+            var typed = owned[String(k)];
+            if (!typed) return;
             var pr = r2p[String(p.routeId)];
             if (!pr) { unresolved++; return; }
             // WHICH END IS HOME: the polyline is drawn FROM the route's departure hub.
@@ -19449,6 +19574,8 @@ function am4RbClassifyFleet(force) {
             if (!certain) uncertain++;
             planes.push({
                 aircraftId: String(k), reg: String(p.reg == null ? k : p.reg),
+                model: typed.model || '',
+                typeId: am4AircraftTypeId(),
                 snapshotRouteId: p.routeId,
                 hubId: String(hub.Id), hubIcao: hub.icao || hub.iata || String(hub.Id),
                 curDestId: String(dest.Id), curDestIcao: dest.icao || dest.iata || String(dest.Id),
@@ -19461,6 +19588,7 @@ function am4RbClassifyFleet(force) {
         });
         am4RbFleetCache = { planes: planes, hubIds: hubIds, unresolved: unresolved, uncertain: uncertain, at: Date.now() };
         return am4RbFleetCache;
+    });
     });
 }
 
@@ -20263,6 +20391,8 @@ function am4RbAdvance(job) {
     // ---- ① pre-flight: everything that can be checked before anything is touched ----
     case'queued' :
     case'validating' : {
+        return am4RbRejectIfWrongType(job).then(function (rejected) {
+        if (rejected || job.state === 'needs_attention' || job.state === 'rolling_back') return;
         var air = (typeof am4FleetResolveAirport === 'function') ? am4FleetResolveAirport(String(job.newDestId)) : null;
         if (!air) { am4RbFatal(job,'destination ' + job.newDestIcao + ' could not be resolved'); return Promise.resolve(); }
         var band = am4RbBand(job.toStrategy);
@@ -20308,7 +20438,10 @@ function am4RbAdvance(job) {
                         job.toStrategy + ' band (' + band.lo.toLocaleString() + '–' + band.hi.toLocaleString() + ' km)');
                     return;
                 }
-                if (rc.distKm && rc.rangeKm && rc.distKm > rc.rangeKm) { am4RbFatal(job,'destination is out of range'); return; }
+                if (rc.distKm && rc.rangeKm) {
+                    var earlyRange = am4RbRangeBlock(rc.distKm, rc.rangeKm, true);
+                    if (earlyRange) { am4RbFatal(job, job.newDestIcao + ' ' + earlyRange); return; }
+                }
                 if (rc.distKm) job.newDistKm = rc.distKm;
             }
             if (rc.demand && originIsHub) job.seats = am4RbTargetSeats(rc.demand, job.toStrategy);
@@ -20318,6 +20451,7 @@ function am4RbAdvance(job) {
                 (originIsHub ? ' (confirmed by the game)' : ' — the game will confirm it once ' + job.reg + ' is home'),
                 'waiting until the aircraft is at its base so it can be taken off its route');
         }).catch(function (e) { am4RbTransient(job,'pre-flight check failed: ' + e); });
+        });
     }
 
     // ---- ② wait for the aircraft to be AT ITS BASE, then ground it in the same step ----
@@ -20328,6 +20462,8 @@ function am4RbAdvance(job) {
     // the aircraft in the gap. The routeId is fetched FIRST, so the at-base check stays
     // the last thing before the mutation.
     case'awaiting_base' : {
+        return am4RbRejectIfWrongType(job).then(function (rejected) {
+        if (rejected || job.state === 'needs_attention' || job.state === 'rolling_back') return;
         return am4RbFetchAircraftPage(job.aircraftId).then(function (page) {
             if (!page.routeId) { am4RbTransient(job,'could not read the route id from the aircraft page'); return; }
             job.groundRouteId = String(page.routeId);
@@ -20343,6 +20479,19 @@ function am4RbAdvance(job) {
                 return;
             }
             job.etaAt = 0;
+            // Ground ONLY when the current leg departs from this aircraft's hub.
+            // A valid modify panel also opens while inbound, and a "Departs in" timer
+            // at the far end is not the hub — both used to get grounded.
+            var dep = (page.ends && page.ends[0]) ? String(page.ends[0]).toUpperCase() : '';
+            var home = String(job.hubIcao || '').toUpperCase();
+            if (!dep || dep !== home) {
+                am4RbSay(job, null,
+                    job.reg + ' is not at hub ' + (job.hubIcao || '?') +
+                    (dep ? (' — current departure is ' + dep) : ' — could not read where it is sitting') +
+                    '. Rebuild only runs at the hub.',
+                    'checking again once it is on the ground at ' + (job.hubIcao || 'its hub'));
+                return;
+            }
             return am4RbReadAircraftState(job.aircraftId).then(function (st) {
                 if (!st.atBase) {
                     var nextStep = (st.reason === 'pending_maintenance')
@@ -20365,6 +20514,7 @@ function am4RbAdvance(job) {
                 return am4RbDoGround(job);
             });
         }).catch(function (e) { am4RbTransient(job,'base check failed: ' + e); });
+        });
     }
 
     // ---- ③ grounding is re-entered only by the reconciler ----
@@ -20373,6 +20523,8 @@ function am4RbAdvance(job) {
 
     // ---- ④ seats for the target strategy + the three mods (Speed is what makes the bands true) ----
     case'configuring' : {
+        return am4RbRejectIfWrongType(job).then(function (rejected) {
+        if (rejected || job.state === 'needs_attention' || job.state === 'rolling_back') return;
         return am4FleetFetchModifyInfo(job.aircraftId).then(function (info) {
             if (info && info.paused) { am4RbTransient(job,'waiting: Research is using an aircraft'); return; }
             if (!info || !info.looksValid) {
@@ -20421,6 +20573,7 @@ function am4RbAdvance(job) {
                 }).catch(function (e) { job.pending = null; am4RbTransient(job,'modification request failed: ' + e); });
             });
         }).catch(function (e) { am4RbTransient(job,'configuration step failed: ' + e); });
+        });
     }
 
     // ---- ⑤ the modify timer. Tens of minutes here are expected, not a stall ----
@@ -20529,7 +20682,10 @@ function am4RbAdvance(job) {
                         job.hubIcao + ' to ' + job.newDestIcao + ', outside the Strategy ' + job.toStrategy + ' band');
                     return;
                 }
-                if (rc.distKm && rc.rangeKm && rc.distKm > rc.rangeKm) { am4RbFatal(job,'destination is out of range'); return; }
+                if (rc.distKm && rc.rangeKm) {
+                    var lateRange = am4RbRangeBlock(rc.distKm, rc.rangeKm, false);
+                    if (lateRange) { am4RbFatal(job, job.newDestIcao + ' ' + lateRange); return; }
+                }
                 if (!job.newReg) { job.newReg = am4RbUniqueName(job.newDestIcao); }
                 var isCargoRb = !!(row.cargo || rc.looksCargo || (rc.nativePrices && rc.nativePrices.type === 'cargo'));
                 var prices = am4FleetPricePlan(rc, isCargoRb);
@@ -20748,12 +20904,13 @@ function am4RbEnqueuePair(pair) {
         id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         at: Date.now(), updatedAt: Date.now(),
         aircraftId: String(p.aircraftId), reg: String(p.reg),
+        model: p.model || '',
         hubId: String(p.hubId), hubIcao: p.hubIcao,
         oldDestIcao: p.curDestIcao, oldDistKm: p.curDist,
         fromStrategy: pair.fromStrategy, toStrategy: pair.toStrategy,
         newDestId: String(pair.dest.arrId), newDestIcao: pair.destIcao,
         newDistKm: pair.dest.km, newReg: null,
-        typeId: am4AircraftTypeId(),
+        typeId: p.typeId || am4AircraftTypeId(),
         seats: pair.seats,
         state: 'queued', what: AM4_RB_STEP_LABEL.queued,
         why: 'queued for a Strategy ' + pair.fromStrategy + ' → ' + pair.toStrategy + ' rebuild',
@@ -22998,25 +23155,62 @@ function am4OpsListLandedFleetIds() {
     return ids;
 }
 
+function am4OpsReadTicketNum(box, html, selectors, asInt) {
+    var el = box.querySelector(selectors);
+    var raw = '';
+    if (el) {
+        raw = (el.value != null && String(el.value).trim() !== '') ? String(el.value) : '';
+        if (!raw) raw = String(el.getAttribute('value') || el.textContent || '');
+    }
+    if (!raw) {
+        var ids = String(selectors || '').split(',');
+        var ii;
+        for (ii = 0; ii < ids.length; ii++) {
+            var id = ids[ii].replace(/[#\s]/g, '');
+            if (!id) continue;
+            var re = new RegExp('(?:id|name)=["\']' + id + '["\'][^>]*value=["\']([\\d.,]+)', 'i');
+            var m = String(html || '').match(re);
+            if (!m) {
+                re = new RegExp('value=["\']([\\d.,]+)["\'][^>]*(?:id|name)=["\']' + id + '["\']', 'i');
+                m = String(html || '').match(re);
+            }
+            if (m) { raw = m[1]; break; }
+        }
+    }
+    if (!raw) return null;
+    var n = asInt
+        ? parseInt(String(raw).replace(/[^0-9-]/g, ''), 10)
+        : parseFloat(String(raw).replace(/,/g, ''));
+    return isFinite(n) ? n : null;
+}
+
+// querySelector('#eTicket, #eSeat') returns whichever node comes first in the page,
+// so a seat box or a prefilled suggestion was being read as the live ticket and the
+// audit concluded every route was already correct. Walk ids in priority order.
+function am4OpsReadPrice(box, html, ids, asInt) {
+    var i, el, n, present;
+    for (i = 0; i < ids.length; i++) {
+        el = box.querySelector('#' + ids[i]);
+        present = !!el || new RegExp('(?:id|name)=["\']' + ids[i] + '["\']', 'i').test(html || '');
+        if (!present) continue;
+        n = am4OpsReadTicketNum(box, html, '#' + ids[i], asInt);
+        if (n != null && n > 0) return n;
+        if (/Ticket|^price_/i.test(ids[i])) return null;
+    }
+    return null;
+}
+
 function am4OpsFetchRouteTicketState(fleetId) {
     return fetch('routes_main.php?mode=details&id=' + encodeURIComponent(fleetId), { credentials: 'include' })
         .then(function (r) { return r.text(); })
         .then(function (h) {
             var box = document.createElement('div');
             box.innerHTML = h || '';
-            var vInt = function (id) {
-                var el = box.querySelector('#' + id);
-                if (!el) return null;
-                var n = parseInt(String(el.value != null ? el.value : el.textContent), 10);
-                return isFinite(n) ? n : null;
-            };
-            var vFloat = function (sels) {
-                var el = box.querySelector(sels);
-                if (!el) return null;
-                var n = parseFloat(String(el.value != null ? el.value : el.textContent).replace(/,/g, ''));
-                return isFinite(n) && n > 0 ? n : null;
-            };
-            var rid = ((h || '').match(/fleet_ground\.php\?id=(\d+)/i) || [])[1] || null;
+            var text = (box.innerText || '').replace(/\s+/g, ' ');
+            var readInt = function (sels) { return am4OpsReadTicketNum(box, h, sels, true); };
+            var readFloat = function (sels) { return am4OpsReadTicketNum(box, h, sels, false); };
+            var rid = ((h || '').match(/fleet_ground\.php\?id=(\d+)/i) || [])[1] ||
+                ((h || '').match(/set_ticket_prices\.php\?[^"'<>]*\bid=(\d+)/i) || [])[1] || null;
             var autoCode = '';
             var autoNodes = box.querySelectorAll('[onclick*="autoPrice"], [onclick*="ticketPriceSuggest"]');
             var ai;
@@ -23031,86 +23225,153 @@ function am4OpsFetchRouteTicketState(fleetId) {
                     return parseFloat(String(s).replace(/[^0-9.]/g, ''));
                 }).filter(function (n) { return isFinite(n) && n > 0; });
             }
-            var hasPriceL = !!box.querySelector('#price_l, #lTicket');
+            // autoPrice(Y, J, F, flag) — the 4th value is a flag, not a ticket.
+            if (nums && nums.length > 3) nums = nums.slice(0, 3);
+            var hasPriceL = !!box.querySelector('#price_l, #lTicket, #lSeat');
+            var hasPriceH = !!box.querySelector('#price_h, #hTicket, #hSeat');
             var hasF = !!box.querySelector('#fTicket, #fSeat, #price_f');
             var charterMode = (typeof am4IsCharter === 'function' && am4IsCharter());
-            var looksCargo = hasPriceL || /Large\s*load|Heavy\s*load|#price_l|freighter/i.test(h || '') ||
-                (!charterMode && !hasF && nums && (nums.length === 2 || nums.length >= 4));
+            var looksCargo = hasPriceL || hasPriceH ||
+                /Large\s*load|Heavy\s*load|cargo\s*ticket|freighter/i.test(text) ||
+                (!charterMode && !hasF && nums && nums.length === 2);
+            var distM = text.match(/[A-Z0-9]{3,4}\s+([\d,]+)\s*km\s+[A-Z0-9]{3,4}/i);
+            var distKm = distM ? parseInt(String(distM[1]).replace(/[^0-9]/g, ''), 10) : 0;
 
             if (looksCargo) {
-                var curL = vFloat('#price_l, #lTicket') || vFloat('#eTicket, #eSeat');
-                var curH = vFloat('#price_h, #hTicket') || vFloat('#bTicket, #bSeat');
-                var autoL = null, autoH = null;
-                if (nums && nums.length >= 2) { autoL = nums[0]; autoH = nums[1]; }
+                var curL = am4OpsReadPrice(box, h, ['price_l', 'lTicket', 'lSeat'], false);
+                var curH = am4OpsReadPrice(box, h, ['price_h', 'hTicket', 'hSeat'], false);
+                if (!(curL > 0)) curL = am4OpsReadPrice(box, h, ['eTicket', 'price_y', 'eSeat'], false);
+                if (!(curH > 0)) curH = am4OpsReadPrice(box, h, ['bTicket', 'price_j', 'bSeat'], false);
+                var autoL = null, autoH = null, autoSrc = '';
+                if (nums && nums.length >= 2) { autoL = nums[0]; autoH = nums[1]; autoSrc = 'game Auto'; }
+                else if (distKm > 0 && typeof am4ExpCargoPrices === 'function') {
+                    var fp = am4ExpCargoPrices(distKm);
+                    if (fp && fp.l > 0 && fp.h > 0) {
+                        autoL = fp.l; autoH = fp.h; autoSrc = 'cargo formula';
+                    }
+                }
+                var cargoWhy = '';
+                if (!rid) cargoWhy = 'no route id';
+                else if (!(autoL > 0 && autoH > 0)) cargoWhy = 'no Large/Heavy Auto price';
+                else if (!(curL > 0 && curH > 0)) cargoWhy = 'could not read current Large/Heavy tickets';
                 return {
                     fleetId: String(fleetId),
                     routeId: rid,
                     cargo: true,
+                    kind: 'cargo',
                     cur: { l: curL, h: curH },
                     auto: (autoL > 0 && autoH > 0) ? { l: autoL, h: autoH } : null,
-                    readable: !!(rid && autoL > 0 && autoH > 0)
+                    autoSrc: autoSrc,
+                    distKm: distKm,
+                    why: cargoWhy,
+                    readable: !!(rid && autoL > 0 && autoH > 0 && curL > 0 && curH > 0)
                 };
             }
 
-            var cur = { y: vInt('eTicket'), j: vInt('bTicket'), f: vInt('fTicket') };
-            var auto = null;
-            if (nums && nums.length >= 3) {
-                auto = { y: Math.round(nums[0]), j: Math.round(nums[1]), f: Math.round(nums[2]) };
-            } else if (charterMode && nums && nums.length >= 2) {
+            // First-class ticket field means scheduled pax. No First price field means charter (Y+J only).
+            var hasFPrice = !!box.querySelector('#fTicket, #price_f') ||
+                /(?:id|name)=["'](?:fTicket|price_f)["']/i.test(h || '');
+            var kind = hasFPrice ? 'pax' : 'charter';
+            var cur = {
+                y: am4OpsReadPrice(box, h, ['eTicket', 'price_y', 'eSeat'], true),
+                j: am4OpsReadPrice(box, h, ['bTicket', 'price_j', 'bSeat'], true),
+                f: kind === 'pax' ? am4OpsReadPrice(box, h, ['fTicket', 'price_f'], true) : 0
+            };
+            var auto = null, autoSrc = '';
+            if (kind === 'charter' && nums && nums.length >= 2) {
                 auto = { y: Math.round(nums[0]), j: Math.round(nums[1]), f: 0 };
-            } else {
-                var m = (h || '').match(/ticketPriceSuggest\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i) ||
-                    (h || '').match(/autoPrice\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
-                if (m) auto = { y: +m[1], j: +m[2], f: +m[3] };
-                else if (charterMode) {
-                    var m2 = (h || '').match(/ticketPriceSuggest\s*\(\s*(\d+)\s*,\s*(\d+)/i) ||
-                        (h || '').match(/autoPrice\s*\(\s*(\d+)\s*,\s*(\d+)/i);
-                    if (m2) auto = { y: +m2[1], j: +m2[2], f: 0 };
+                autoSrc = 'game Auto';
+            } else if (kind === 'pax' && nums && nums.length >= 3) {
+                auto = { y: Math.round(nums[0]), j: Math.round(nums[1]), f: Math.round(nums[2]) };
+                autoSrc = 'game Auto';
+            } else if (distKm > 0 && typeof am4ExpPrices === 'function') {
+                var bp = am4ExpPrices(distKm);
+                if (bp && bp.y > 0 && bp.j > 0) {
+                    auto = {
+                        y: Math.round(bp.y),
+                        j: Math.round(bp.j),
+                        f: kind === 'charter' ? 0 : Math.round(bp.f)
+                    };
+                    autoSrc = (typeof am4IsRealism === 'function' && am4IsRealism()) ? 'Realism formula' : 'Easy formula';
                 }
             }
+            var why = '';
+            var priced = kind === 'charter'
+                ? (cur.y > 0 && cur.j > 0)
+                : (cur.y > 0 && cur.j > 0 && cur.f > 0);
+            if (!rid) why = 'no route id';
+            else if (!auto) why = 'no Auto price';
+            else if (!priced) why = kind === 'charter'
+                ? 'could not read current Y/J tickets'
+                : 'could not read current Y/J/F tickets';
             return {
                 fleetId: String(fleetId),
                 routeId: rid,
                 cargo: false,
-                charter: !!charterMode,
+                charter: kind === 'charter',
+                kind: kind,
                 cur: cur,
                 auto: auto,
-                readable: !!(rid && auto && auto.y > 0 && auto.j > 0 && (charterMode || auto.f > 0))
+                autoSrc: autoSrc,
+                distKm: distKm,
+                why: why,
+                readable: !!(rid && auto && auto.y > 0 && auto.j > 0 && (kind === 'charter' || auto.f > 0) && priced)
             };
         });
 }
 
-function am4OpsTicketTargetFromAuto(auto, cargo) {
+function am4PriceFloorDollar(n) {
+    var x = Math.floor(Number(n));
+    return x > 0 ? x : 0;
+}
+function am4PriceCargoCents(n) {
+    var x = Math.floor(Number(n) * 100) / 100;
+    return x > 0 ? x : 0;
+}
+
+function am4OpsTicketTargetFromAuto(auto, kind) {
     if (!auto) return null;
-    if (cargo) {
-        var trunc = function (x) { return Math.floor(Number(x) * 100) / 100; };
+    if (kind === true) kind = 'cargo';
+    if (!kind) kind = 'pax';
+    if (kind === 'cargo') {
         return {
-            l: trunc(Number(auto.l) * Number(AM4_CONFIG.cargoMultiLarge)),
-            h: trunc(Number(auto.h) * Number(AM4_CONFIG.cargoMultiHeavy))
+            l: am4PriceCargoCents(Number(auto.l) * (Number(AM4_CONFIG.cargoMultiLarge) || 1.1)),
+            h: am4PriceCargoCents(Number(auto.h) * (Number(AM4_CONFIG.cargoMultiHeavy) || 1.08))
         };
     }
-    var needsFirst = (typeof am4PaxNeedsFirst === 'function') ? am4PaxNeedsFirst() : true;
+    if (kind === 'charter') {
+        return {
+            y: am4PriceFloorDollar(Number(auto.y) * (Number(AM4_CONFIG.charterMultiEco) || 1.1)),
+            j: am4PriceFloorDollar(Number(auto.j) * (Number(AM4_CONFIG.charterMultiBiz) || 1.08)),
+            f: 0
+        };
+    }
     return {
-        y: Math.max(1, Math.floor(Number(auto.y) * Number(AM4_CONFIG.paxMultiEco))),
-        j: Math.max(1, Math.floor(Number(auto.j) * Number(AM4_CONFIG.paxMultiBiz))),
-        f: needsFirst ? Math.max(1, Math.floor(Number(auto.f) * Number(AM4_CONFIG.paxMultiFirst))) : 0
+        y: am4PriceFloorDollar(Number(auto.y) * (Number(AM4_CONFIG.paxMultiEco) || 1.1)),
+        j: am4PriceFloorDollar(Number(auto.j) * (Number(AM4_CONFIG.paxMultiBiz) || 1.08)),
+        f: am4PriceFloorDollar(Number(auto.f) * (Number(AM4_CONFIG.paxMultiFirst) || 1.06))
     };
+}
+
+function am4OpsPaxNear(a, b) {
+    if (a == null || b == null) return false;
+    return Math.floor(Number(a)) === Math.floor(Number(b));
 }
 
 // True when current tickets differ from Auto × multipliers (under- OR overpriced).
 function am4OpsTicketsNeedFix(cur, want, cargo) {
-    if (!want) return false;
+    if (!want || !cur) return false;
     if (cargo) {
-        if (!cur || cur.l == null || cur.h == null) return true;
-        return Math.abs(Number(cur.l) - Number(want.l)) > 0.009 ||
-            Math.abs(Number(cur.h) - Number(want.h)) > 0.009;
+        if (cur.l == null || cur.h == null) return false;
+        return Math.abs(Number(cur.l) - Number(want.l)) > 0.02 ||
+            Math.abs(Number(cur.h) - Number(want.h)) > 0.02;
     }
-    if (!cur || cur.y == null || cur.j == null) return true;
+    if (cur.y == null || cur.j == null) return false;
     if ((typeof am4IsCharter === 'function' && am4IsCharter()) || want.f === 0) {
-        return cur.y !== want.y || cur.j !== want.j;
+        return !am4OpsPaxNear(cur.y, want.y) || !am4OpsPaxNear(cur.j, want.j);
     }
-    if (cur.f == null) return true;
-    return cur.y !== want.y || cur.j !== want.j || cur.f !== want.f;
+    if (cur.f == null) return false;
+    return !am4OpsPaxNear(cur.y, want.y) || !am4OpsPaxNear(cur.j, want.j) || !am4OpsPaxNear(cur.f, want.f);
 }
 
 function am4OpsTicketsDirection(cur, want, cargo) {
@@ -23143,20 +23404,58 @@ function am4OpsSetTicketPrices(routeId, y, j, f) {
 }
 
 function am4OpsSetTicketPricesCargo(routeId, l, h) {
-    // Freighter routes reuse e/b slots (same pattern as new_route_info mode=do).
-    return am4OpsSetTicketPrices(routeId, l, h, 0);
+    // Freighter routes accept e/b and l/h (same pair new_route_info mode=do sends).
+    return fetch('set_ticket_prices.php?e=' + encodeURIComponent(l) +
+        '&b=' + encodeURIComponent(h) +
+        '&f=0' +
+        '&l=' + encodeURIComponent(l) +
+        '&h=' + encodeURIComponent(h) +
+        '&id=' + encodeURIComponent(routeId), { credentials: 'include' })
+        .then(function (r) { return r.text(); });
 }
 
 function am4OpsTicketWriteOk(after, want, cargo) {
     if (!after || !after.cur || !want) return false;
     if (cargo) {
+        if (after.cur.l == null || after.cur.h == null) return false;
         return Math.abs(Number(after.cur.l) - Number(want.l)) <= 0.02 &&
             Math.abs(Number(after.cur.h) - Number(want.h)) <= 0.02;
     }
+    if (after.cur.y == null || after.cur.j == null) return false;
     if ((typeof am4IsCharter === 'function' && am4IsCharter()) || want.f === 0) {
-        return after.cur.y === want.y && after.cur.j === want.j;
+        return am4OpsPaxNear(after.cur.y, want.y) && am4OpsPaxNear(after.cur.j, want.j);
     }
-    return after.cur.y === want.y && after.cur.j === want.j && after.cur.f === want.f;
+    if (after.cur.f == null) return false;
+    return am4OpsPaxNear(after.cur.y, want.y) && am4OpsPaxNear(after.cur.j, want.j) &&
+        am4OpsPaxNear(after.cur.f, want.f);
+}
+
+function am4OpsTicketLabel(cur, cargo) {
+    if (!cur) return '?';
+    if (cargo) return 'L' + cur.l + '/H' + cur.h;
+    return 'Y' + cur.y + '/J' + cur.j + '/F' + cur.f;
+}
+
+// Write, then re-read. If the route id does not stick, try the fleet id once.
+function am4OpsWriteTickets(rt, want, fleetId, preferFleetId) {
+    var id = (preferFleetId || !rt.routeId) ? fleetId : rt.routeId;
+    var write = rt.cargo
+        ? am4OpsSetTicketPricesCargo(id, want.l, want.h)
+        : am4OpsSetTicketPrices(id, want.y, want.j, want.f);
+    return write.then(function () {
+        return am4OpsFetchRouteTicketState(fleetId);
+    }).then(function (after) {
+        if (am4OpsTicketWriteOk(after, want, rt.cargo)) return { ok: true, usedFleetId: !!preferFleetId, after: after };
+        if (!preferFleetId && String(rt.routeId) !== String(fleetId)) {
+            var retry = rt.cargo
+                ? am4OpsSetTicketPricesCargo(fleetId, want.l, want.h)
+                : am4OpsSetTicketPrices(fleetId, want.y, want.j, want.f);
+            return retry.then(function () { return am4OpsFetchRouteTicketState(fleetId); }).then(function (after2) {
+                return { ok: am4OpsTicketWriteOk(after2, want, rt.cargo), usedFleetId: true, after: after2 };
+            });
+        }
+        return { ok: false, usedFleetId: !!preferFleetId, after: after };
+    });
 }
 
 // Fix under- AND overpriced tickets on every landed aircraft, then call onDone.
@@ -23175,17 +23474,23 @@ function am4OpsPreDepartPriceAudit(onDone) {
         done({ fixed: 0, checked: 0 });
         return;
     }
-    var fixed = 0, checked = 0, failed = 0, raised = 0, lowered = 0, proven = false, i = 0;
-    console.log('[AM4 Bot Log] Pre-depart price audit: checking ALL ' + ids.length + ' landed aircraft…');
+    var fixed = 0, checked = 0, failed = 0, unread = 0, raised = 0, lowered = 0, useFleetId = false, i = 0;
+    console.log('[AM4 Bot Log] Pre-depart price audit: checking ALL ' + ids.length +
+        ' landed aircraft. Pax ×' + (AM4_CONFIG.paxMultiEco || 1.1) + '/' +
+        (AM4_CONFIG.paxMultiBiz || 1.08) + '/' + (AM4_CONFIG.paxMultiFirst || 1.06) +
+        ' floor · Cargo ×' + (AM4_CONFIG.cargoMultiLarge || 1.1) + '/' +
+        (AM4_CONFIG.cargoMultiHeavy || 1.08) + ' to $0.01 · Charter ×' +
+        (AM4_CONFIG.charterMultiEco || 1.1) + '/' + (AM4_CONFIG.charterMultiBiz || 1.08) + ' floor');
     (function next() {
         if (i >= ids.length || failed >= AM4_OPS_PRICE_MAX_FAILS) {
             var note = '💵 Pre-depart price audit: fixed ' + fixed + '/' + checked +
                 ' (↑' + raised + ' ↓' + lowered + ')' +
+                (unread ? (' · ' + unread + ' unreadable') : '') +
                 (failed ? (' · ' + failed + ' failed') : '') +
                 ' · scanned ' + ids.length;
             if (typeof am4LogAction === 'function') am4LogAction('depart', note);
             else console.log('[AM4 Bot Log] ' + note);
-            done({ fixed: fixed, checked: checked, failed: failed, raised: raised, lowered: lowered });
+            done({ fixed: fixed, checked: checked, failed: failed, raised: raised, lowered: lowered, unread: unread });
             return;
         }
         if (typeof am4CanMutate === 'function' && !am4CanMutate()) {
@@ -23195,31 +23500,40 @@ function am4OpsPreDepartPriceAudit(onDone) {
         var fleetId = ids[i++];
         am4OpsFetchRouteTicketState(fleetId).then(function (rt) {
             checked++;
-            if (!rt || !rt.readable) return;
-            var want = am4OpsTicketTargetFromAuto(rt.auto, rt.cargo);
+            if (!rt || !rt.readable) {
+                unread++;
+                if (unread <= 3) {
+                    console.log('[AM4 Bot Log] Pre-depart price audit skip ' + fleetId +
+                        ': ' + ((rt && rt.why) || 'unreadable'));
+                }
+                return;
+            }
+            var want = am4OpsTicketTargetFromAuto(rt.auto, rt.kind || (rt.cargo ? 'cargo' : 'pax'));
+            var before = am4OpsTicketLabel(rt.cur, rt.cargo);
+            var afterLabel = am4OpsTicketLabel(want, rt.cargo);
+            if (checked <= 3) {
+                console.log('[AM4 Bot Log] Price audit ' + (rt.kind || 'pax') + ' ' + fleetId + ' now ' + before +
+                    ' want ' + afterLabel + (rt.autoSrc ? (' via ' + rt.autoSrc) : '') +
+                    (am4OpsTicketsNeedFix(rt.cur, want, rt.cargo) ? '' : ' (already matches)'));
+            }
             if (!am4OpsTicketsNeedFix(rt.cur, want, rt.cargo)) return;
             var dir = am4OpsTicketsDirection(rt.cur, want, rt.cargo);
-            var write = rt.cargo
-                ? am4OpsSetTicketPricesCargo(rt.routeId, want.l, want.h)
-                : am4OpsSetTicketPrices(rt.routeId, want.y, want.j, want.f);
-            return write.then(function () {
-                if (!proven) {
-                    return am4OpsFetchRouteTicketState(fleetId).then(function (after) {
-                        if (!am4OpsTicketWriteOk(after, want, rt.cargo)) {
-                            failed = AM4_OPS_PRICE_MAX_FAILS;
-                            throw new Error('first set_ticket_prices write did not take');
-                        }
-                        proven = true;
-                        fixed++;
-                        if (dir === 'raised') raised++;
-                        else if (dir === 'lowered') lowered++;
-                        else { raised++; lowered++; }
-                    });
+            return am4OpsWriteTickets(rt, want, fleetId, useFleetId).then(function (res) {
+                if (!res || !res.ok) {
+                    failed++;
+                    console.log('[AM4 Bot Log] Pre-depart price audit write did not stick on ' + fleetId +
+                        ' (' + before + ' → ' + afterLabel + ', read back ' +
+                        am4OpsTicketLabel(res && res.after && res.after.cur, rt.cargo) + ')');
+                    return;
                 }
+                if (res.usedFleetId) useFleetId = true;
                 fixed++;
                 if (dir === 'raised') raised++;
                 else if (dir === 'lowered') lowered++;
                 else { raised++; lowered++; }
+                if (fixed <= 8) {
+                    console.log('[AM4 Bot Log] Price audit fixed ' + fleetId + ' ' + before + ' → ' + afterLabel);
+                }
             });
         }).catch(function (e) {
             failed++;
@@ -23254,12 +23568,14 @@ function am4OpsPriceAuditTick() {
             });
         } catch (e1) { ids = []; }
     }
-    var fixed = 0, checked = 0, failed = 0, raised = 0, lowered = 0, proven = false, i = 0;
+    var fixed = 0, checked = 0, failed = 0, unread = 0, raised = 0, lowered = 0, useFleetId = false, i = 0;
     var finish = function () {
         try { localStorage.setItem(AM4_OPS_PRICE_LAST_KEY, String(Date.now())); } catch (e2) { /* ignore */ }
-        if ((fixed || appliedPanels) && typeof am4LogAction === 'function') {
-            am4LogAction('ops', '💵 Price audit: fixed ' + fixed +
+        if ((fixed || appliedPanels || unread || failed) && typeof am4LogAction === 'function') {
+            am4LogAction('ops', '💵 Price audit: fixed ' + fixed + '/' + checked +
                 ' (↑' + raised + ' ↓' + lowered + ')' +
+                (unread ? (' · ' + unread + ' unreadable') : '') +
+                (failed ? (' · ' + failed + ' failed') : '') +
                 (appliedPanels ? (', panels ' + appliedPanels) : ''));
         }
         am4OpsPriceBusy = false;
@@ -23273,27 +23589,13 @@ function am4OpsPriceAuditTick() {
         var fleetId = ids[i++];
         am4OpsFetchRouteTicketState(fleetId).then(function (rt) {
             checked++;
-            if (!rt || !rt.readable) return;
-            var want = am4OpsTicketTargetFromAuto(rt.auto, rt.cargo);
+            if (!rt || !rt.readable) { unread++; return; }
+            var want = am4OpsTicketTargetFromAuto(rt.auto, rt.kind || (rt.cargo ? 'cargo' : 'pax'));
             if (!am4OpsTicketsNeedFix(rt.cur, want, rt.cargo)) return;
             var dir = am4OpsTicketsDirection(rt.cur, want, rt.cargo);
-            var write = rt.cargo
-                ? am4OpsSetTicketPricesCargo(rt.routeId, want.l, want.h)
-                : am4OpsSetTicketPrices(rt.routeId, want.y, want.j, want.f);
-            return write.then(function () {
-                if (!proven) {
-                    return am4OpsFetchRouteTicketState(fleetId).then(function (after) {
-                        if (!am4OpsTicketWriteOk(after, want, rt.cargo)) {
-                            failed = AM4_OPS_PRICE_MAX_FAILS;
-                            throw new Error('write did not take');
-                        }
-                        proven = true;
-                        fixed++;
-                        if (dir === 'raised') raised++;
-                        else if (dir === 'lowered') lowered++;
-                        else { raised++; lowered++; }
-                    });
-                }
+            return am4OpsWriteTickets(rt, want, fleetId, useFleetId).then(function (res) {
+                if (!res || !res.ok) { failed++; return; }
+                if (res.usedFleetId) useFleetId = true;
                 fixed++;
                 if (dir === 'raised') raised++;
                 else if (dir === 'lowered') lowered++;
