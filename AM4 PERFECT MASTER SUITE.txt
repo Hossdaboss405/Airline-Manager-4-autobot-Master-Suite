@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name AM4 MASTER SUITE MADE BY HOSS
 // @namespace http://tampermonkey.net/
-// @version 2.114
+// @version 2.116
 // @description AM4 automation suite (PC edition): Prep & create route (modify→wait→route)
 // @author HOSS
 // @match *://airlinemanager.com/*
@@ -24,7 +24,7 @@
 (function() {
 'use strict';
 
-var AM4_SUITE_VERSION = '2.114';
+var AM4_SUITE_VERSION = '2.116';
 var AM4_SUITE_EDITION = 'pc';
 
 if (typeof window !== 'undefined') {
@@ -153,11 +153,6 @@ var AM4_DEFAULT_CONFIG = {
     seatRebalanceEnabled: false, // at-base planes: refresh seats from live demand (no reroute)
     seatRebalanceHrs: 12,
     hubPlannerEnabled: true, // Explorer: suggest buy counts from remaining ★ routes (manual queue)
-    allianceDonateEnabled: false, // spend cash to alliance — OFF by default
-    allianceDonateRemindOnly: true, // if donate enabled is false, still log a reminder when cash is high
-    allianceDonateMinCash: 50000000, // only remind/donate when balance ≥ this
-    allianceDonateAmount: 1000000, // contribution size when auto-donate is ON
-    allianceDonateHrs: 24,
     deliveryWatchRoute: false, // after post-delivery CO₂/Speed/Fuel, try to route from Explorer remaining
     routeHealthEnabled: true, // periodic band / stack health report in the action log
     routeHealthHrs: 6,
@@ -232,20 +227,29 @@ var AM4_DEFAULT_CONFIG = {
     // Countries and airports below are spelled the way the game's own dropdowns spell
     // them - the highlighter compares against that text.
     eliteCountries: [
-        "South Korea","Singapore" ,"Hong Kong" ,"India" ,"United Arab Emirates" ,"Bahrain" ,
-        "Australia","Fiji" ,
-        "United Kingdom","Netherlands" ,"Germany" ,"France" ,
-        "United States","Brazil" ,"Chile" ,"Venezuela" ,"Argentina" ,
-        "Tunisia","Angola" ,"Senegal"
+        "South Korea","Japan" ,"China" ,"Taiwan" ,"Singapore" ,"Hong Kong" ,"India" ,"Thailand" ,"Malaysia" ,"Indonesia" ,"Philippines" ,"Vietnam" ,
+        "United Arab Emirates","Qatar" ,"Bahrain" ,"Saudi Arabia" ,"Turkey" ,"Israel" ,
+        "Australia","New Zealand" ,"Fiji" ,
+        "United Kingdom","Ireland" ,"Netherlands" ,"Belgium" ,"Germany" ,"France" ,"Spain" ,"Portugal" ,"Italy" ,"Switzerland" ,"Austria" ,"Denmark" ,"Sweden" ,"Norway" ,"Finland" ,"Greece" ,"Poland" ,
+        "United States","Canada" ,"Mexico" ,"Brazil" ,"Chile" ,"Argentina" ,"Colombia" ,"Peru" ,"Panama" ,"Venezuela" ,
+        "South Africa","Egypt" ,"Morocco" ,"Tunisia" ,"Kenya" ,"Ethiopia" ,"Nigeria" ,"Angola" ,"Senegal"
     ],
     highYieldAirports: [
-        "Seoul Incheon","Singapore" ,"Hong Kong" ,"New Delhi" ,
-        "Dubai","Manama" ,
-        "Sydney intl","Canberra" ,"Nadi" ,
-        "London Heathrow","Amsterdam" ,"Frankfurt intl" ,"Paris Charles de Gaulle" ,
-        "New York JFK","Dallas-Fort Worth" ,"Chicago O'Hare" ,"Los Angeles" ,
-        "São Paulo Guarulhos","Santiago" ,"Caracas" ,"Buenos Aires Int" ,
-        "Tunis","Luanda" ,"Dakar L.S. Senghor"
+        "Seoul Incheon","Tokyo Haneda" ,"Tokyo Narita" ,"Osaka Kansai" ,
+        "Beijing Capital","Shanghai Pudong" ,"Guangzhou" ,"Taipei Taoyuan" ,
+        "Singapore","Hong Kong" ,"New Delhi" ,"Mumbai" ,
+        "Bangkok","Kuala Lumpur" ,"Jakarta" ,"Manila" ,"Ho Chi Minh" ,"Hanoi" ,
+        "Dubai","Abu Dhabi" ,"Doha" ,"Manama" ,"Riyadh" ,"Jeddah" ,"Istanbul" ,"Tel Aviv" ,
+        "Sydney intl","Melbourne" ,"Brisbane" ,"Perth" ,"Canberra" ,"Auckland" ,"Nadi" ,
+        "London Heathrow","London Gatwick" ,"Manchester" ,"Dublin" ,
+        "Amsterdam","Brussels" ,"Frankfurt intl" ,"Munich" ,"Paris Charles de Gaulle" ,
+        "Madrid","Barcelona" ,"Lisbon" ,"Rome Fiumicino" ,"Milan" ,"Zurich" ,"Vienna" ,
+        "Copenhagen","Stockholm" ,"Oslo" ,"Helsinki" ,"Athens" ,"Warsaw" ,
+        "New York JFK","Newark" ,"Boston" ,"Atlanta" ,"Miami" ,"Orlando" ,
+        "Dallas-Fort Worth","Houston" ,"Chicago O'Hare" ,"Denver" ,"Los Angeles" ,"San Francisco" ,"Seattle" ,"Las Vegas" ,
+        "Toronto","Vancouver" ,"Mexico City" ,
+        "São Paulo Guarulhos","Santiago" ,"Buenos Aires Int" ,"Bogota" ,"Lima" ,"Panama City" ,"Caracas" ,
+        "Johannesburg","Cape Town" ,"Cairo" ,"Casablanca" ,"Tunis" ,"Nairobi" ,"Addis Ababa" ,"Lagos" ,"Luanda" ,"Dakar L.S. Senghor"
     ]
 };
 
@@ -293,9 +297,6 @@ var AM4_NUM_BOUNDS = {
     fleetBuyerMaxPerBuy: [1, 100],
     fleetBuyerSpendCap: [0, 1e12],
     seatRebalanceHrs: [1, 168],
-    allianceDonateMinCash: [0, 1e12],
-    allianceDonateAmount: [1, 1e12],
-    allianceDonateHrs: [1, 168],
     routeHealthHrs: [1, 168],
     priceAuditHrs: [1, 168],
     staffHrHrs: [0.25, 168],
@@ -475,6 +476,26 @@ function loadAm4Config() {
         merged.charterMultiBiz = 1.08;
         merged.priceScaleVersion = 1;
         try { localStorage.setItem(AM4_CONFIG_KEY, JSON.stringify(merged)); } catch (eScale) { /* ignore */ }
+    }
+    // One-time: add the expanded elite-country and high-yield airport lists
+    // without wiping names already saved in settings.
+    if (stored.hubListVersion !== 1) {
+        var mergeHubNames = function (current, extras) {
+            var out = Array.isArray(current) ? current.slice() : [];
+            var seen = {};
+            out.forEach(function (n) { seen[am4HubKey(n)] = true; });
+            (extras || []).forEach(function (n) {
+                var k = am4HubKey(n);
+                if (!k || seen[k]) return;
+                seen[k] = true;
+                out.push(n);
+            });
+            return out;
+        };
+        merged.eliteCountries = mergeHubNames(merged.eliteCountries, AM4_DEFAULT_CONFIG.eliteCountries);
+        merged.highYieldAirports = mergeHubNames(merged.highYieldAirports, AM4_DEFAULT_CONFIG.highYieldAirports);
+        merged.hubListVersion = 1;
+        try { localStorage.setItem(AM4_CONFIG_KEY, JSON.stringify(merged)); } catch (eHub) { /* ignore */ }
     }
     return merged;
 }
@@ -2165,11 +2186,6 @@ var AM4_SETTINGS_SCHEMA = [
     { key:"seatRebalanceEnabled" , label:"Seat rebalance (at-base, no reroute)" , type:"bool" },
     { key:"seatRebalanceHrs" , label:"Seat rebalance every (hrs)" , type:"float" , min: 1 },
     { key:"hubPlannerEnabled" , label:"Explorer hub capacity planner" , type:"bool" },
-    { key:"allianceDonateRemindOnly" , label:"Alliance: remind when cash is high" , type:"bool" },
-    { key:"allianceDonateEnabled" , label:"Alliance: auto-donate (spends $)" , type:"bool" },
-    { key:"allianceDonateMinCash" , label:"Alliance donate if balance ≥ ($)" , type:"int" , min: 0 },
-    { key:"allianceDonateAmount" , label:"Alliance donate amount ($)" , type:"int" , min: 1 },
-    { key:"allianceDonateHrs" , label:"Alliance donate/remind every (hrs)" , type:"float" , min: 1 },
     { key:"deliveryWatchRoute" , label:"After delivery mods, auto-route from Explorer" , type:"bool" },
     { key:"routeHealthEnabled" , label:"Route health check (log)" , type:"bool" },
     { key:"routeHealthHrs" , label:"Route health every (hrs)" , type:"float" , min: 1 },
@@ -12533,14 +12549,9 @@ function am4FleetOnPlaneSelect() {
     });
 }
 
-//================================================================================
-// DETAILS-CLICK ROUTE ENGINE (same sequence as Ultimate Auto Bot)
-// User clicks Details. That is what binds the PHP/session aircraft. Preflight
-// reads range/origin/runway from the open card, then the suite clicks the live
-// Research tab: #popBtn3 → Ajax('research_main.php','routeAction',...). The
-// native URL has no aircraft id — do not rewrite it. Then fill search, pick a
-// route with <2 A/C, create via new_route_info.php?id=<locked>&ferry=0.
-// Never clicks Modify or Maintenance. Never clicks the landed-list leftover plane.
+// DETAILS-CLICK ROUTE ENGINE
+// Details opens the aircraft card and locks hub, range and runway. The card stays
+// open. Clicking the Research tab then fills the search and creates the route.
 //================================================================================
 var AM4_RTE_DETAILS_SEL = 'button[onclick*="mode=details"], #singleDeparter button[onclick*="details"], button[onclick*="fleet_details.php"], button[onclick*="showFlightInfo"]';
 var AM4_RTE_RESEARCH_SEL = '#popBtn3, button[onclick*="research_main.php"], button[onclick*="research-main.php"]';
@@ -12566,7 +12577,9 @@ var am4Rte = {
     lastPlaneId: '',
     staleReg: '', staleOrigin: '', staleRange: 0, waitLogged: false,
     researchBefore: '', researchClickAt: 0, resultsBefore: '', demandClicked: false, sawEmptyResults: false,
-    hubResolveBusy: false, hubResolveDone: false,
+    hubResolveBusy: false, hubResolveDone: false, researchRequested: false,
+    leaveDetailsOpen: true, bgBusy: false,
+    bg: { phase: '', candidates: [], error: '' },
     headless: { phase: '', rc: null, prices: null, error: '', body: '', retried: false, gen: 0 }
 };
 var am4RteListenerOn = false;
@@ -14583,6 +14596,10 @@ function am4RteStart(lock) {
     am4Rte.hideStubLogged = false;
     am4Rte.hubResolveBusy = false;
     am4Rte.hubResolveDone = false;
+    am4Rte.researchRequested = false;
+    am4Rte.leaveDetailsOpen = true;
+    am4Rte.bgBusy = false;
+    am4Rte.bg = { phase: '', candidates: [], error: '' };
     am4RteHeadlessReset();
     am4RteInstallAjaxGuard();
     if (!am4RteOwnedHubNames().length && typeof am4ExpFetchMeta === 'function') {
@@ -14592,6 +14609,98 @@ function am4RteStart(lock) {
     }
     am4RteGo('PREFLIGHT','aircraft selected; starting preflight');
     am4RteSchedule();
+}
+
+function am4RteRejectBg(reason) {
+    am4Rte.gen++;
+    if (am4Rte.selectedId) am4Rte.rejected[am4Rte.selectedId] = reason || true;
+    am4RteLog('rejected ' + (am4Rte.selectedLabel || am4Rte.selectedId || 'route') + ': ' + reason,'warn');
+    am4Rte.bgBusy = false;
+    am4RteHeadlessReset();
+    am4RteGo('BG_PICK');
+    am4RteSchedule(40);
+}
+
+function am4RteBeginBackgroundSearch() {
+    if (am4Rte.bg && (am4Rte.bg.phase === 'search' || am4Rte.bg.phase === 'ready')) return;
+    var hubId = am4Rte.specs && am4Rte.specs.hubId;
+    var dist = (am4Rte.specs && am4Rte.specs.range) || 0;
+    var rwy = (am4Rte.specs && am4Rte.specs.runway) || 0;
+    var token = {};
+    am4Rte.bg = { phase: 'search', candidates: [], error: '', token: token };
+    if (!hubId || !(dist > 0)) {
+        am4Rte.bg.phase = 'error';
+        am4Rte.bg.error = 'missing this aircraft\'s hub or range';
+        return;
+    }
+    var metaP = (typeof am4ExpFetchMeta === 'function') ? am4ExpFetchMeta(false) : Promise.resolve(null);
+    metaP.then(function (meta) {
+        if (!am4Rte.bg || am4Rte.bg.token !== token) return;
+        var countries = (meta && meta.countries) || [];
+        if (!countries.length) {
+            am4Rte.bg.phase = 'error';
+            am4Rte.bg.error = 'no country list yet — open Research Explorer once, then click Details again';
+            am4RteSchedule(40);
+            return;
+        }
+        var rows = [];
+        var i = 0;
+        function fetchCountry(country) {
+            var name = String(country || '');
+            if (!name) return Promise.resolve();
+            var url = 'research_main.php?mode=search&rwy=' + encodeURIComponent(rwy) +
+                '&dist=' + encodeURIComponent(dist) +
+                '&depId=' + encodeURIComponent(hubId) +
+                '&arr=' + encodeURIComponent(name) +
+                '&arrId=0&' + (typeof am4CharterQs === 'function' ? am4CharterQs() : '') +
+                '&_=' + Date.now();
+            return am4RteGameGet(url).then(function (res) {
+                if (typeof am4ExpParseRows === 'function') {
+                    rows = rows.concat(am4ExpParseRows((res && res.body) || ''));
+                }
+            }).catch(function () { /* skip country */ });
+        }
+        (function nextBatch() {
+            if (!am4Rte.bg || am4Rte.bg.token !== token) return;
+            if (i >= countries.length) {
+                var best = {};
+                rows.forEach(function (r) {
+                    if (!r || !r.arrId) return;
+                    if (r.dist > dist) return;
+                    if (rwy && r.rwy && r.rwy < rwy) return;
+                    var score = (r.dY || 0) + (r.dJ || 0) * 2 + (r.dF || 0) * 3 + (r.dL || 0) + (r.dH || 0) * 0.7;
+                    var prev = best[r.arrId];
+                    if (!prev || score > prev.score) {
+                        best[r.arrId] = {
+                            arrId: String(r.arrId),
+                            label: r.pair || r.destName || String(r.arrId),
+                            score: score
+                        };
+                    }
+                });
+                var list = Object.keys(best).map(function (k) { return best[k]; });
+                list.sort(function (a, b) { return b.score - a.score; });
+                am4Rte.bg.candidates = list;
+                am4Rte.bg.phase = 'ready';
+                am4RteLog('background search found ' + list.length + ' destinations. Details panel was left open.');
+                am4RteSchedule(40);
+                return;
+            }
+            var batch = [];
+            while (batch.length < 2 && i < countries.length) {
+                batch.push(countries[i]);
+                i++;
+            }
+            Promise.all(batch.map(fetchCountry)).then(function () {
+                setTimeout(nextBatch, 200);
+            });
+        })();
+    }).catch(function (err) {
+        if (!am4Rte.bg || am4Rte.bg.token !== token) return;
+        am4Rte.bg.phase = 'error';
+        am4Rte.bg.error = String((err && err.message) || err);
+        am4RteSchedule(40);
+    });
 }
 
 function am4RteTick() {
@@ -14612,7 +14721,9 @@ function am4RteTick() {
                     if (am4RteElapsed() > 10000) am4RteStop('preflight timed out: Details did not switch to the clicked aircraft','error');
                     break;
                 }
+                var keptHubId = am4Rte.specs && am4Rte.specs.hubId;
                 am4Rte.specs = matchPanel.live;
+                if (keptHubId && am4Rte.specs && !am4Rte.specs.hubId) am4Rte.specs.hubId = keptHubId;
                 if (matchPanel.live.reg) am4Rte.reg = matchPanel.live.reg;
                 var hubResolved = am4RteFindOwnedHubInText(am4RteDetailsSearchBlob());
                 if (hubResolved) {
@@ -14645,7 +14756,116 @@ function am4RteTick() {
                     ' origin ' + (am4Rte.specs.originLabel || am4Rte.specs.origin || '(resolve at Research)') +
                     ' range ' + am4Rte.specs.range + ' km rwy ' + (am4Rte.specs.runway || 0) + ' m');
                 if (am4Rte.planeId) am4RteLog('locked aircraft id ' + am4Rte.planeId);
-                am4RteGo('OPEN_RESEARCH','preflight complete; opening Research');
+                if (am4Rte.researchRequested) {
+                    am4RteGo('FILL','Research already open — filling hub, range and runway');
+                } else {
+                    am4RteGo('WAIT_RESEARCH','Details stay open. Click the Research tab on this aircraft to search routes.');
+                }
+                break;
+
+            case'WAIT_RESEARCH' :
+                if (am4Rte.researchRequested) {
+                    am4RteGo('FILL','Research tab opened — filling hub, range and runway');
+                }
+                break;
+
+            case'BG_SEARCH' :
+                if (!am4Rte.bg || !am4Rte.bg.phase) am4RteBeginBackgroundSearch();
+                if (am4Rte.bg && am4Rte.bg.phase === 'error') {
+                    am4RteStop(am4Rte.bg.error || 'background search failed','error');
+                    break;
+                }
+                if (am4Rte.bg && am4Rte.bg.phase === 'ready') {
+                    am4RteGo('BG_PICK','background results ready');
+                } else if (am4RteElapsed() > 180000) {
+                    am4RteStop('background research timed out','error');
+                }
+                break;
+
+            case'BG_PICK' :
+                if (am4Rte.bgBusy) break;
+                if (am4Rte.attemptCount >= AM4_RTE_MAX_ATTEMPTS) {
+                    am4RteStop('maximum route attempts reached','error');
+                    break;
+                }
+                var bgList = (am4Rte.bg && am4Rte.bg.candidates) || [];
+                var bgPick = null;
+                var bgI;
+                for (bgI = 0; bgI < bgList.length; bgI++) {
+                    var bgId = 'bg>' + bgList[bgI].arrId;
+                    if (am4Rte.rejected[bgId] || am4Rte.attempted[bgId]) continue;
+                    bgPick = bgList[bgI];
+                    bgPick._id = bgId;
+                    break;
+                }
+                if (!bgPick) {
+                    am4RteStop('no untried routes remain','error');
+                    break;
+                }
+                am4Rte.attemptCount++;
+                am4Rte.selectedId = bgPick._id;
+                am4Rte.selectedLabel = bgPick.label;
+                am4Rte.attempted[bgPick._id] = true;
+                am4Rte.selectedRow = null;
+                am4Rte.arrId = bgPick.arrId;
+                am4Rte.arrIdSource = 'background search';
+                var bgPair = String(bgPick.label || '').toUpperCase().match(/\b([A-Z]{3,4})\s*(?:-|>|\/)\s*([A-Z]{3,4})\b/);
+                am4Rte.depCode = bgPair ? bgPair[1] : '';
+                am4Rte.arrCode = bgPair ? bgPair[2] : '';
+                am4Rte.bgBusy = true;
+                am4RteLog('trying ' + am4Rte.attemptCount + ': ' + bgPick.label +
+                    ' (background — aircraft details stay open)');
+                var genBg = am4Rte.gen;
+                am4RteFetchModeRes(am4Rte.planeId, bgPick.arrId).then(function (html) {
+                    if (genBg !== am4Rte.gen) return;
+                    am4Rte.bgBusy = false;
+                    var rc = (typeof am4FleetParseRouteConfig === 'function') ? am4FleetParseRouteConfig(html) : null;
+                    if (!rc || (!rc.hasCreate && !(rc.distKm > 0))) {
+                        am4RteRejectBg('route config did not offer Create');
+                        return;
+                    }
+                    if (rc.acOnRoute != null && rc.acOnRoute > AM4_RTE_MAX_AC_ON_ROUTE) {
+                        am4RteRejectBg(rc.acOnRoute + ' aircraft already on route (need < 2)');
+                        return;
+                    }
+                    var prices = (typeof am4FleetPricePlan === 'function') ? am4FleetPricePlan(rc, !!rc.looksCargo) : null;
+                    if (!prices) {
+                        am4RteRejectBg('could not price this route');
+                        return;
+                    }
+                    var destIcao = rc.destIcao || am4Rte.arrCode || '';
+                    var routeName = (rc.acOnRoute > 0 && typeof am4FleetRouteNameForDest === 'function')
+                        ? am4FleetRouteNameForDest(destIcao, rc.acOnRoute)
+                        : (am4Rte.reg || (typeof am4FleetRouteNameForDest === 'function'
+                            ? am4FleetRouteNameForDest(destIcao, 0) : 'N'));
+                    am4Rte.headless.rc = rc;
+                    am4Rte.headless.prices = prices;
+                    am4Rte.headless.phase = 'ready';
+                    var keptReg = am4Rte.reg;
+                    am4Rte.reg = routeName;
+                    var sent = am4RteSubmitHeadless();
+                    am4Rte.reg = keptReg;
+                    if (!sent) {
+                        am4RteRejectBg('could not send the route');
+                        return;
+                    }
+                    am4RteGo('BG_WAIT','create sent for ' + routeName);
+                    am4RteSchedule(80);
+                }).catch(function (err) {
+                    if (genBg !== am4Rte.gen) return;
+                    am4Rte.bgBusy = false;
+                    am4RteRejectBg(String((err && err.message) || err));
+                });
+                break;
+
+            case'BG_WAIT' :
+                if (am4Rte.headless && am4Rte.headless.phase === 'done') {
+                    am4RteStop('route created for ' + (am4Rte.selectedLabel || am4Rte.reg || am4Rte.planeId));
+                } else if (am4Rte.headless && (am4Rte.headless.phase === 'fail' || am4Rte.headless.phase === 'error')) {
+                    am4RteRejectBg(am4Rte.headless.error || 'create failed');
+                } else if (am4RteElapsed() > 20000) {
+                    am4RteRejectBg('create was not confirmed');
+                }
                 break;
 
             case'OPEN_RESEARCH' :
@@ -15177,7 +15397,38 @@ function am4RteReopenLockedDetails() {
     }
 }
 
+function am4RteOnResearchTab(event) {
+    if (!event || !event.isTrusted) return false;
+    var hit = event.target && event.target.closest ? event.target.closest(AM4_RTE_RESEARCH_SEL) : null;
+    if (!hit) return false;
+    var oc = String(hit.getAttribute('onclick') || '');
+    if (hit.id !== 'popBtn3' && !/research_main\.php/i.test(oc)) return false;
+    var busy = /^(FILL|WAIT_RESULTS|SELECT|WAIT_DETAILS|EVALUATE|OPEN_CREATE|VERIFY|RECOVER|WAIT_PRICE|AUTOPRICE|SUBMIT|WAIT_SUBMIT|BACKSTEP|BG_SEARCH|BG_PICK|BG_WAIT)$/;
+    if (busy.test(am4Rte.state || '')) return true;
+    am4Rte.researchRequested = true;
+    am4Rte.researchClickAt = Date.now();
+    am4Rte.researchBefore = (typeof am4RteResearchFormSig === 'function') ? am4RteResearchFormSig() : '';
+    if (am4Rte.state === 'PREFLIGHT') {
+        am4RteLog('Research clicked — the form will be filled when preflight finishes');
+        return true;
+    }
+    if (am4Rte.state === 'WAIT_RESEARCH' || (am4Rte.specs && am4Rte.specs.range)) {
+        if (am4Rte.state === 'IDLE') {
+            am4Rte.gen++;
+            if (typeof am4RteInstallAjaxGuard === 'function') am4RteInstallAjaxGuard();
+        }
+        am4RteLog('Research tab opened for ' + (am4Rte.reg || am4Rte.planeId || 'this aircraft') +
+            ' — filling hub, range ' + (am4Rte.specs && am4Rte.specs.range) + ' km and runway');
+        am4RteGo('FILL','Research tab opened — filling hub, range and runway');
+        am4RteSchedule(450);
+        return true;
+    }
+    am4RteLog('open Details on the aircraft first, then click Research','warn');
+    return true;
+}
+
 function am4RteOnDetailsClick(event) {
+    if (am4RteOnResearchTab(event)) return;
     var btn = event.target && event.target.closest ? event.target.closest(AM4_RTE_DETAILS_SEL) : null;
     if (!btn) return;
     if (am4RteIsForbidden(btn) && !/mode=details|fleet_details|showFlightInfo/i.test(String(btn.getAttribute('onclick') || ''))) return;
@@ -15195,8 +15446,8 @@ function am4RteOnDetailsClick(event) {
     }
     // Never restart an active cycle while we are mid-create/submit.
     // This is exactly what breaks the aircraft binding in your log.
-    if (am4Rte.state !== 'IDLE') {
-        am4RteLog('already running (' + am4Rte.state + '); ignoring extra Details click','warn');
+    if (am4Rte.state !== 'IDLE' && am4Rte.state !== 'WAIT_RESEARCH') {
+        am4RteLog('research keeps running (' + am4Rte.state + ') — this Details click only opens the aircraft','warn');
         return;
     }
     var planeId = am4RteAircraftId(btn) ||
@@ -21998,21 +22249,18 @@ window.AM4Rebuild = {
 };
 
 
-// AUTOMATION PLUS (v2.27) — hub planner, seat rebalance, alliance donate/remind,
-// route health, price audit, delivery→route. All fail-closed; enable in ⚙.
+// AUTOMATION PLUS — hub planner, seat rebalance, route health, price audit,
+// delivery→route. All fail-closed; enable in ⚙.
 //================================================================================
 var am4OpsSeatTimer = null;
 var am4OpsHealthTimer = null;
 var am4OpsPriceTimer = null;
-var am4OpsAllianceTimer = null;
 var am4OpsStaffTimer = null;
 var am4OpsHubTimer = null;
 var am4OpsSeatBusy = false;
 var am4OpsPriceBusy = false;
-var am4OpsAllianceBusy = false;
 var am4OpsStaffBusy = false;
 var am4OpsHubBusy = false;
-var AM4_OPS_ALLIANCE_LAST_KEY = 'am4OpsAllianceLast';
 var AM4_OPS_HEALTH_LAST_KEY = 'am4OpsHealthLast';
 var AM4_OPS_PRICE_LAST_KEY = 'am4OpsPriceLast';
 var AM4_OPS_STAFF_LAST_KEY = 'am4OpsStaffLast';
@@ -23607,77 +23855,6 @@ function am4OpsPriceAuditTick() {
     })();
 }
 
-function am4OpsAllianceTick() {
-    if (am4OpsAllianceBusy) return;
-    if (!AM4_CONFIG.allianceDonateEnabled && !AM4_CONFIG.allianceDonateRemindOnly) return;
-    if (typeof am4InQuietHours === 'function' && am4InQuietHours()) return;
-    try {
-        var last = parseInt(localStorage.getItem(AM4_OPS_ALLIANCE_LAST_KEY) || '0', 10) || 0;
-        var wait = (Number(AM4_CONFIG.allianceDonateHrs) || 24) * 3600 * 1000;
-        if (Date.now() - last < wait) return;
-    } catch (e0) { /* ignore */ }
-    var minCash = Number(AM4_CONFIG.allianceDonateMinCash) || 0;
-    if (!am4OpsCashAbove(minCash)) return;
-    am4OpsAllianceBusy = true;
-    var amount = Number(AM4_CONFIG.allianceDonateAmount) || 1000000;
-    fetch('alliance.php?_=' + Date.now(), { credentials: 'include' })
-        .then(function (r) { return r.text(); })
-        .then(function (html) {
-            var box = document.createElement('div');
-            box.innerHTML = html || '';
-            var donateUrl = null;
-            var links = box.querySelectorAll('a[href*="donat"], a[onclick*="donat"], button[onclick*="donat"]');
-            var forms = box.querySelectorAll('form');
-            var fi, action, inp;
-            for (fi = 0; fi < forms.length; fi++) {
-                action = String(forms[fi].getAttribute('action') || '');
-                if (/donat|contrib/i.test(action + ' ' + (forms[fi].innerHTML || ''))) {
-                    donateUrl = action || 'alliance.php';
-                    break;
-                }
-            }
-            if (!donateUrl && links.length) {
-                var href = links[0].getAttribute('href') || '';
-                if (href && href.indexOf('javascript:') !== 0) donateUrl = href;
-            }
-            try { localStorage.setItem(AM4_OPS_ALLIANCE_LAST_KEY, String(Date.now())); } catch (e1) { /* ignore */ }
-            if (!AM4_CONFIG.allianceDonateEnabled || AM4_CONFIG.allianceDonateRemindOnly) {
-                if (typeof am4LogAction === 'function') {
-                    am4LogAction('ops', '🤝 Alliance: cash above $' + minCash.toLocaleString() +
-                        ' — consider contributing ~$' + amount.toLocaleString() +
-                        (donateUrl ? '' : ' (donate control not found on alliance page)'));
-                }
-                return;
-            }
-            if (typeof am4CanMutate === 'function' && !am4CanMutate()) return;
-            var gate = am4BuildCanSpend(amount);
-            if (gate) {
-                if (typeof am4LogAction === 'function') am4LogAction('ops', '🤝 Alliance donate skipped: ' + gate);
-                return;
-            }
-            if (!donateUrl) {
-                if (typeof am4LogAction === 'function') {
-                    am4LogAction('ops', '🤝 Alliance auto-donate ON but no donate URL found — reminder only');
-                }
-                return;
-            }
-            var url = donateUrl;
-            if (url.indexOf('http') !== 0 && url.indexOf('/') !== 0) {
-                /* relative ok */
-            }
-            if (url.indexOf('amount=') === -1) {
-                url += (url.indexOf('?') === -1 ? '?' : '&') + 'amount=' + encodeURIComponent(amount) + '&mode=donate';
-            }
-            return fetch(url, { credentials: 'include' }).then(function () {
-                if (typeof am4LogAction === 'function') {
-                    am4LogAction('ops', '🤝 Alliance donate attempted $' + amount.toLocaleString());
-                }
-            });
-        })
-        .catch(function () { /* ignore */ })
-        .then(function () { am4OpsAllianceBusy = false; });
-}
-
 function am4OpsStartSchedulers() {
     if (!am4OpsSeatTimer) {
         am4OpsSeatTimer = setInterval(function () {
@@ -23692,10 +23869,6 @@ function am4OpsStartSchedulers() {
     if (!am4OpsPriceTimer) {
         am4OpsPriceTimer = setInterval(am4OpsPriceAuditTick, 20 * 60 * 1000);
         setTimeout(am4OpsPriceAuditTick, am4Jitter(240000));
-    }
-    if (!am4OpsAllianceTimer) {
-        am4OpsAllianceTimer = setInterval(am4OpsAllianceTick, 30 * 60 * 1000);
-        setTimeout(am4OpsAllianceTick, am4Jitter(300000));
     }
     if (!am4OpsStaffTimer) {
         am4OpsStaffTimer = setInterval(function () { am4OpsStaffTick(false); }, 10 * 60 * 1000);
