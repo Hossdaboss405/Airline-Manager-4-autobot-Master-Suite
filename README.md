@@ -8,8 +8,9 @@ Please note that this bot is against the Terms of Service of the game and its us
 This bot is currently DONE with development and its functionality is PERFECT. It can currently automate the following tasks:
 - [x] Toggles for all auto functions
 - [x] Sidebar / ⚙ settings panel to change thresholds, timings, multipliers, campaigns, and more
+- [x] Easy or Realism ticket formulas, and Scheduled (Y/J/F or cargo) or Charter (Y/J only)
 - [x] Depart all ready planes (full gate queue, multi-batch)
-- [x] Better autoprice when setting up new routes (pax Y/J/F and cargo Large/Heavy)
+- [x] Autoprice on new routes: pax Y/J/F ×1.1 / ×1.08 / ×1.06 rounded down to the dollar; cargo Large/Heavy ×1.1 / ×1.08 to the cent; charter Y/J ×1.1 / ×1.08 rounded down to the dollar
 - [x] Auto-start marketing campaigns (per-type strength/duration; never auto-buys points campaigns)
 - [x] Buy fuel at low price
 - [x] Buy CO₂ quotas at low price
@@ -17,15 +18,17 @@ This bot is currently DONE with development and its functionality is PERFECT. It
 - [x] Auto-repair planes above your wear threshold (configurable, e.g. 20%)
 - [x] Best hub purchase suggestions (highlighted country + airport)
 - [x] Financial metrics overlay (net income, avg fuel/CO₂ spend; starts with the script)
-- [x] Alliance contribution/day in the overlay + C/F (contribution per flight)
+- [x] Alliance contribution/day in the overlay + C/F (contribution per flight), weekly delta or live snapshot
 - [x] Research Explorer to find best routes for all hubs
 - [x] One-click Auto-Build from Explorer (order → configure → modify → route)
-- [x] Cargo-aware Auto-Build / Modify / Build Route (correct Large/Heavy loads & tickets)
+- [x] Cargo-aware Auto-Build / Modify / Build Route (correct Large/Heavy loads and tickets; cargo orders use the game purchase form)
 - [x] Rebuild routes to your liking (strategy From→To, optional auto-queue / overnight Auto-run)
+- [x] Rebuild only the aircraft type selected in the suite, and only when that plane is on the ground at its own hub
+- [x] Rebuild range check allows the Fuel −10% bump before the route is created, then checks the real kilometres after mods
 - [x] Fleet Assistant (fleet state + manual capped buyer + manual route builder)
-- [x] Separate 🔧 Modify panel (seats + speed/fuel/CO₂; parked & routed; cargo reconfigure)
+- [x] Separate 🔧 Modify panel (seats + speed/fuel/CO₂; parked and routed; every owned type’s configs; cargo reconfigure)
 - [x] Status tab with live module state + persisted action log
-- [x] Price audit (fix under- and overpriced tickets → Auto × your multipliers; before depart + optional background)
+- [x] Price audit on every landed aircraft before depart, plus an optional background pass (raises underpriced and lowers overpriced tickets to Auto × the pax, cargo, or charter multipliers above; the log shows a few samples and a full scanned count)
 - [x] Auto staff morale (min-salary dance for Pilots, Crew, Engineers, Technicians)
 - [x] Auto hub lounge repair (wear threshold configurable)
 - [x] Auto hub catering purchase when missing (duration/amount configurable)
@@ -37,9 +40,10 @@ This bot is currently DONE with development and its functionality is PERFECT. It
 - [x] Quiet hours (idle overnight)
 - [x] Hard spend guards (never-spend-points, daily/per-cycle caps, cash reserve, aircraft order caps)
 - [x] Acting-tab lock so only one browser tab mutates the game
+- [x] PC edition and a separate cross-platform edition (PC / Android / iPhone) — install one, not both
 - [x] All suite windows draggable + collapsible (positions remembered)
 - [x] Collapsible overlay + randomized timing jitter
-
+- [x] Optional restore of toggles after a reload
 
 
 ## Installation
